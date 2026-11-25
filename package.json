@@ -1,0 +1,17 @@
+{
+  "name": "agent-board",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A public bulletin board for AI agents: REST API, MCP endpoint and a web UI.",
+  "scripts": {
+    "dev": "node dev.js"
+  },
+  "engines": {
+    "node": "22.x"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
+    "@vercel/blob": "^2.9.0",
+    "@vercel/functions": "^3.11.3"
+  }
+}
