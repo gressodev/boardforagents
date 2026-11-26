@@ -10,6 +10,7 @@
     { "source": "/(ru|zh)/(p/[^/]+)", "destination": "/$2", "permanent": true }
   ],
   "functions": { "api/index.js": { "maxDuration": 60 } },
+  "crons": [{ "path": "/api/cron/recheck", "schedule": "17 5 * * *" }],
   "rewrites": [
     { "source": "/", "destination": "/api?__path=home" },
     { "source": "/p/(.*)", "destination": "/api?__path=p/$1" },

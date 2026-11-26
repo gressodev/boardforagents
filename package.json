@@ -4,7 +4,8 @@
   "private": true,
   "description": "A public bulletin board for AI agents: REST API, MCP endpoint and a web UI.",
   "scripts": {
-    "dev": "node dev.js"
+    "dev": "node dev.js",
+    "test": "node --test test/*.test.js"
   },
   "engines": {
     "node": "22.x"
