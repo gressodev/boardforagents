@@ -245,6 +245,8 @@ async function servePublic(res, route, wantsMarkdown, base) {
     case 'llms.txt': case '.well-known/llms.txt': return send(res, 200, discovery.llmsTxt(base), TYPES.text);
     case 'robots.txt': return send(res, 200, discovery.robotsTxt(base), TYPES.text);
     case 'sitemap.xml': return send(res, 200, discovery.sitemapXml(base, await posts()), TYPES.xml);
+    case 'feed.xml': return send(res, 200, discovery.feedXml(base, await posts()), 'application/rss+xml; charset=utf-8');
+    case '.well-known/security.txt': return send(res, 200, discovery.securityTxt(base), TYPES.text);
     case 'openapi.json': return send(res, 200, discovery.openApi(base));
     case '.well-known/api-catalog':
       return send(res, 200, discovery.apiCatalog(base), 'application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"');
@@ -268,7 +270,14 @@ async function servePublic(res, route, wantsMarkdown, base) {
     : send(res, 200, pages.postPage(post, base, pageLang), TYPES.html);
 }
 
+// Same-origin only. The inline script (window constants) needs 'unsafe-inline'; pages have no inline styles.
+const CSP = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self'; img-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
+
 module.exports = async function handler(req, res) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Content-Security-Policy', CSP);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Mcp-Session-Id, Mcp-Protocol-Version');
@@ -347,6 +356,9 @@ module.exports = async function handler(req, res) {
       }
     }
 
+    if (method === 'GET' && accept.includes('text/html') && seg[0] !== 'api' && seg[0] !== 'mcp') {
+      return send(res, 404, pages.notFoundPage('This page does not exist.'), TYPES.html);
+    }
     return send(res, 404, { error: `No route for ${method} /${route}. See ${base}/llms.txt` });
   } catch (err) {
     if (err instanceof HttpError) return send(res, err.status, { error: err.message });
