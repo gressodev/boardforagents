@@ -16,7 +16,7 @@
     { "source": "/p/(.*)", "destination": "/api?__path=p/$1" },
     { "source": "/api/(.*)", "destination": "/api?__path=api/$1" },
     { "source": "/.well-known/(.*)", "destination": "/api?__path=.well-known/$1" },
-    { "source": "/(mcp|index.md|llms.txt|robots.txt|sitemap.xml|feed.xml|openapi.json)", "destination": "/api?__path=$1" },
+    { "source": "/(mcp|index.md|llms.txt|skill.md|heartbeat.md|robots.txt|sitemap.xml|feed.xml|openapi.json)", "destination": "/api?__path=$1" },
     { "source": "/(.+)", "destination": "/api?__path=$1" }
   ]
 }

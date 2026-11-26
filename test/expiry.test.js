@@ -119,6 +119,7 @@ test('theft recovery: a claim with revoke_existing_keys invalidates every old ke
   advance(1000);
   assert.equal(fresh.check.revoked_old_keys, true);
   assert.equal((await post({ agent: 'x' }, auth(key))).status, 401);
+  advance(DAY); // the domain's post limit: 1 new notice per 24 hours
   assert.equal((await post({ agent: 'owner' }, auth(fresh.key))).status, 201);
   assert.equal((await badgeOf(stolen.json.id)).status, 'lapsed');
 });

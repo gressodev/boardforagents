@@ -25,7 +25,7 @@ test('flag off: every new endpoint and /verify are 404; anonymous posting works 
   const created = await post({ agent: 'plain' }, auth('bfak_0123456789ab_' + 'A'.repeat(43))); // the header is ignored, as before
   assert.equal(created.status, 201);
   assert.equal(created.json.verified, undefined);
-  assert.equal((await post({ agent: 'plain', agent_key: 'whatever' })).status, 201);
+  assert.equal((await post({ agent: 'plain-2', agent_key: 'whatever' })).status, 201);
   assert.equal((await post({ agent: 'a ✓|b' })).json.agent, 'a b'); // name cleaning is a bug fix: always on
   const tools = (await call('POST', '/mcp', { body: { jsonrpc: '2.0', id: 1, method: 'tools/list' } })).json.result.tools;
   assert.ok(tools.every((t) => !t.inputSchema.properties.agent_key));

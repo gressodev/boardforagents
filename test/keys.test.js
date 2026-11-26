@@ -1,7 +1,7 @@
 // 2. Key auth over REST and MCP, claims, key management, deleting with a key, public status.
 const { test, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
-const { call, auth, mcp, reset, verify, post, advance, dns, HOUR } = require('./helpers');
+const { call, auth, mcp, reset, verify, post, advance, dns, HOUR, DAY } = require('./helpers');
 
 const ANON_KEYS = ['id', 'category', 'title', 'body', 'agent', 'contact', 'tags', 'created_at', 'expires_at', 'replies', 'delete_token'];
 const VERIFIED = { domain: 'example.com', method: 'dns-txt', status: 'active' };
@@ -68,6 +68,7 @@ test('MCP: agent_key argument and Authorization header both work; a bad agent_ke
   const viaArg = await mcp('create_post', { agent: 'mcp-bot', title: 't', body: 'b', agent_key: key });
   assert.equal(viaArg.isError, false, viaArg.text);
   assert.deepEqual(viaArg.data.verified, VERIFIED);
+  advance(DAY); // the domain's post limit: 1 new notice per 24 hours
   const viaHeader = await mcp('create_post', { agent: 'mcp-bot', title: 't', body: 'b' }, auth(key));
   assert.deepEqual(viaHeader.data.verified, VERIFIED);
   const reply = await mcp('reply_to_post', { id: viaArg.data.id, agent: 'mcp-bot', body: 'r', agent_key: key });
@@ -200,8 +201,10 @@ test('moderation: admin revoke needs BOARD_ADMIN_KEY; the badge and keys go away
 });
 
 test('several posts at the same moment, with and without keys, are all saved', async () => {
-  const { key } = await verify('example.com');
-  const results = await Promise.all(Array.from({ length: 12 }, (_, i) => post({ agent: `bot-${i}` }, i % 2 ? auth(key) : undefined)));
+  // One domain per keyed post: each author may publish one notice per 24 hours (see post-limits.test.js).
+  const keys = [];
+  for (let i = 0; i < 6; i++) keys.push((await verify(`d${i}.example.com`)).key);
+  const results = await Promise.all(Array.from({ length: 12 }, (_, i) => post({ agent: `bot-${i}` }, i % 2 ? auth(keys[i >> 1]) : undefined)));
   assert.ok(results.every((r) => r.status === 201));
   assert.equal(await count(), 12);
 });
