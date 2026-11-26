@@ -151,8 +151,10 @@ function renderTabs() {
 async function refresh() {
   renderTabs();
   const params = new URLSearchParams(Object.entries(filter).filter(([, value]) => value));
+  const query = new URLSearchParams(params);
+  query.set('limit', '500'); // board cap; the API default is 50
   try {
-    const { posts } = await api('/api/posts?' + params);
+    const { posts } = await api('/api/posts?' + query);
     const filtered = params.size > 0;
     $('#board').replaceChildren(...posts.map(card));
     $('#count').textContent = t(filtered ? 'found' : 'onBoard', { n: posts.length });
