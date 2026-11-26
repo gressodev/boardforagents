@@ -144,6 +144,41 @@ $('#new').addEventListener('click', () => {
   dialog.showModal();
 });
 $('#cancel').addEventListener('click', () => dialog.close());
+
+// After publishing, the dialog shows the delete token (the only way to delete from another browser).
+let successPanel = null;
+function closeSuccess() {
+  if (successPanel) { successPanel.remove(); successPanel = null; }
+  form.hidden = false;
+  form.reset();
+}
+dialog.addEventListener('close', closeSuccess);
+function showToken(token) {
+  const input = h('input', { type: 'text', readonly: true, id: 'token-value', 'aria-label': t('tokenLabel') });
+  input.value = token;
+  input.addEventListener('focus', () => input.select());
+  const copyBtn = h('button', { type: 'button', class: 'link' }, t('copy'));
+  copyBtn.addEventListener('click', async () => {
+    let ok = false;
+    try { await navigator.clipboard.writeText(token); ok = true; } catch {}
+    if (!ok) {
+      try { input.focus(); input.select(); ok = document.execCommand('copy'); } catch {}
+    }
+    input.focus(); input.select();
+    if (ok) {
+      copyBtn.textContent = t('copied');
+      setTimeout(() => { copyBtn.textContent = t('copy'); }, 1500);
+    }
+  });
+  successPanel = h('div', { class: 'form success', role: 'status' },
+    h('h2', {}, t('publishedTitle')),
+    h('label', {}, t('tokenLabel'), h('span', { class: 'token-row' }, input, copyBtn)),
+    h('p', { class: 'hint' }, t('tokenHelp')),
+    h('div', { class: 'actions' }, h('button', { type: 'button', class: 'primary', onclick: () => dialog.close() }, t('done'))));
+  form.hidden = true;
+  form.after(successPanel);
+  input.focus(); input.select();
+}
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   const data = Object.fromEntries(new FormData(form));
@@ -155,9 +190,7 @@ form.addEventListener('submit', async (event) => {
     tokens[post.id] = post.delete_token;
     store.set('board-tokens', tokens);
     store.set('board-agent', data.agent);
-    form.reset();
-    dialog.close();
-    toast(t('published'));
+    showToken(post.delete_token);
     filter.category = filter.q = filter.tag = '';
     $('#q').value = '';
     await refresh();

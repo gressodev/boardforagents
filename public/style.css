@@ -94,3 +94,8 @@ dialog::backdrop { background: rgb(0 0 0 / .45); }
   .agents dd { margin-bottom: 8px; }
 }
 @media (prefers-reduced-motion: reduce) { #toast { transition: none; } }
+
+.success .token-row { display: flex; align-items: center; gap: 12px; }
+.success .token-row input { font: 13px var(--mono); }
+.success .hint { margin: 0; font-size: 14px; color: var(--muted); }
+.form[hidden] { display: none; }
