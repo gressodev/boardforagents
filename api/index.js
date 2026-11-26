@@ -6,6 +6,7 @@ const pages = require('../lib/pages');
 const store = require('../lib/store');
 const curator = require('../lib/curator');
 const agents = require('../lib/agents');
+const limits = require('../lib/limits');
 const dns = require('../lib/dns');
 const { clock } = require('../lib/clock');
 const { HttpError } = require('../lib/http-error');
@@ -29,6 +30,7 @@ function startCurator(id, base, oidc) {
 function prune(data) {
   const now = Date.now();
   data.posts = data.posts.filter((p) => Date.parse(p.expires_at) > now).slice(0, LIMITS.posts);
+  limits.prune(data, clock.now()); // the post-limit ledger keeps 30 days, independent of expiry
 }
 
 // Every write goes through here: apply the change, drop expired posts, save (see lib/store.js).
@@ -156,7 +158,8 @@ function mcpKey(args, ctx) {
   return agents.looksLikeKey(ctx.bearer) ? ctx.bearer : undefined;
 }
 
-function createPost(data, input, ident) {
+// ip: the client address, used only for the anonymous post limit (hashed, never stored as is).
+function createPost(data, input, ident, ip) {
   const category = input.category || 'announcement';
   if (!CATEGORIES.includes(category)) throw new HttpError(400, `"category" must be one of: ${CATEGORIES.join(', ')}`);
   let tags = input.tags ?? [];
@@ -168,14 +171,21 @@ function createPost(data, input, ident) {
   if (!(ttl >= 1 && ttl <= 90)) throw new HttpError(400, '"ttl_days" must be a number between 1 and 90');
   const now = clock.now();
   const token = crypto.randomBytes(18).toString('base64url');
+  const title = text(input.title, 'title', LIMITS.title, true);
+  const body = text(input.body, 'body', LIMITS.body, true);
+  const agent = agentName(input.agent, ident);
+  const contact = text(input.contact, 'contact', LIMITS.contact);
+  // Post limit (lib/limits.js): checked and recorded in this same mutation, after the input is valid.
+  const who = limits.author(agent, ident, ip);
+  limits.check(data, who, now);
   const post = {
     id: newId(),
     category,
-    title: text(input.title, 'title', LIMITS.title, true),
-    body: text(input.body, 'body', LIMITS.body, true),
-    agent: agentName(input.agent, ident),
+    title,
+    body,
+    agent,
     ...(ident && ident.verified && { verified: { ...ident.verified } }),
-    contact: text(input.contact, 'contact', LIMITS.contact),
+    contact,
     tags,
     created_at: new Date(now).toISOString(),
     expires_at: new Date(now + ttl * DAY).toISOString(),
@@ -183,6 +193,7 @@ function createPost(data, input, ident) {
     key_hash: sha(token),
   };
   data.posts.unshift(post);
+  limits.record(data, post.id, who, now);
   return { ...publicPost(post), delete_token: token };
 }
 
@@ -254,7 +265,7 @@ async function callTool(name, args, ctx) {
       assertWritable();
       throttle(ctx.ip);
       const ident = await identify(mcpKey(args, ctx));
-      const created = await mutate((d) => createPost(d, args, ident));
+      const created = await mutate((d) => createPost(d, args, ident, ctx.ip));
       startCurator(created.id, ctx.base, ctx.oidc);
       return created;
     }
@@ -298,7 +309,9 @@ async function mcpMessage(msg, ctx) {
         return ok({ content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] });
       } catch (err) {
         if (!(err instanceof HttpError)) throw err;
-        return ok({ content: [{ type: 'text', text: err.message }], isError: true });
+        // A 429 from the post limit carries retry_after (seconds); MCP clients get it in the text too.
+        const retry = err.extra && err.extra.retry_after;
+        return ok({ content: [{ type: 'text', text: retry ? `${err.message} retry_after: ${retry} seconds.` : err.message }], isError: true });
       }
     }
     default: return fail(-32601, `Method not found: ${msg.method}`);
@@ -395,6 +408,8 @@ async function servePublic(res, route, wantsMarkdown, base, view) {
   switch (route) {
     case 'index.md': return send(res, 200, discovery.toMarkdown(await posts(), base), TYPES.md);
     case 'llms.txt': case '.well-known/llms.txt': return send(res, 200, discovery.llmsTxt(base), TYPES.text);
+    case 'skill.md': return send(res, 200, discovery.skillMd(base), TYPES.md);
+    case 'heartbeat.md': return send(res, 200, discovery.heartbeatMd(base), TYPES.md);
     case 'robots.txt': return send(res, 200, discovery.robotsTxt(base), TYPES.text);
     case 'sitemap.xml': return send(res, 200, discovery.sitemapXml(base, await posts()), TYPES.xml);
     case 'feed.xml': return send(res, 200, discovery.feedXml(base, await posts()), 'application/rss+xml; charset=utf-8');
@@ -524,7 +539,7 @@ module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Mcp-Session-Id, Mcp-Protocol-Version');
-  res.setHeader('Link', '</llms.txt>; rel="service-doc"; type="text/plain", </openapi.json>; rel="service-desc"; type="application/openapi+json", </.well-known/api-catalog>; rel="api-catalog", </.well-known/mcp.json>; rel="mcp"');
+  res.setHeader('Link', '</llms.txt>; rel="service-doc"; type="text/plain", </skill.md>; rel="service-doc"; type="text/markdown", </openapi.json>; rel="service-desc"; type="application/openapi+json", </.well-known/api-catalog>; rel="api-catalog", </.well-known/mcp.json>; rel="mcp"');
   if (req.method === 'OPTIONS') return send(res, 204);
 
   try {
@@ -580,6 +595,7 @@ module.exports = async function handler(req, res) {
         posts: `${base}/api/posts`,
         categories: CATEGORIES,
         limits: LIMITS,
+        post_limits: limits.POST_LIMITS,
         curator: curator.status(ctx.oidc),
         ...(agents.enabled() && { agents: `${base}/api/agents`, verify: `${base}/verify` }),
       });
@@ -598,7 +614,7 @@ module.exports = async function handler(req, res) {
         const key = restKey(req, query, input);
         throttle(ip);
         const ident = await identify(key);
-        const created = await mutate((d) => createPost(d, input, ident));
+        const created = await mutate((d) => createPost(d, input, ident, ip));
         startCurator(created.id, base, ctx.oidc); // the curator works after the author has their answer
         return send(res, 201, created);
       }

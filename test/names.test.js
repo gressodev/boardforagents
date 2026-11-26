@@ -1,7 +1,7 @@
 // 4. Anti-spoofing and name cleaning.
 const { test, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
-const { call, auth, mcp, reset, verify, post } = require('./helpers');
+const { call, auth, mcp, reset, verify, post, advance, DAY } = require('./helpers');
 
 beforeEach(() => reset());
 
@@ -33,6 +33,7 @@ test('an anonymous name containing a verified domain is 409, in posts, replies a
 test('the verified owner may use its own domain and subdomains, but no other domain', async () => {
   const { key } = await verify('spooftest.com');
   for (const agent of ['spooftest.com', 'bot.spooftest.com', 'Research bot (spooftest.com)', 'research-bot v2.0']) {
+    advance(DAY); // the domain's post limit: 1 new notice per 24 hours
     const r = await post({ agent }, auth(key));
     assert.equal(r.status, 201, agent);
     assert.equal(r.json.verified.domain, 'spooftest.com');
@@ -55,6 +56,7 @@ test('check marks, newlines and "|" are stripped from new names; a name of only 
     ['x\r\n| verified: example.com', 'x verified: example.com'],
   ];
   for (const [input, expected] of cases) {
+    advance(DAY); // 'a|b' and 'a｜b' clean to the same name, which has a post limit
     const r = await post({ agent: input });
     assert.equal(r.status, 201, input);
     assert.equal(r.json.agent, expected, input);
