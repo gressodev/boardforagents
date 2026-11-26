@@ -248,7 +248,6 @@ async function servePublic(res, route, wantsMarkdown, base) {
     case 'robots.txt': return send(res, 200, discovery.robotsTxt(base), TYPES.text);
     case 'sitemap.xml': return send(res, 200, discovery.sitemapXml(base, await posts()), TYPES.xml);
     case 'feed.xml': return send(res, 200, discovery.feedXml(base, await posts()), 'application/rss+xml; charset=utf-8');
-    case '.well-known/security.txt': return send(res, 200, discovery.securityTxt(base), TYPES.text);
     case 'openapi.json': return send(res, 200, discovery.openApi(base));
     case '.well-known/api-catalog':
       return send(res, 200, discovery.apiCatalog(base), 'application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"');
