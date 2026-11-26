@@ -8,6 +8,7 @@ const curator = require('../lib/curator');
 const agents = require('../lib/agents');
 const limits = require('../lib/limits');
 const dns = require('../lib/dns');
+const subscriptions = require('../lib/subscriptions');
 const { clock } = require('../lib/clock');
 const { HttpError } = require('../lib/http-error');
 const { waitUntil } = require('@vercel/functions');
@@ -24,6 +25,11 @@ function assertWritable() {
 }
 function startCurator(id, base, oidc) {
   if (!isReadOnly()) waitUntil(curator.run(id, base, oidc));
+}
+// Webhooks (lib/subscriptions.js): after the write succeeded and the answer is ready, in the background.
+// deliver() never throws, and preview deployments never deliver.
+function startDelivery(event, notice, reply, base) {
+  if (!isReadOnly()) waitUntil(subscriptions.deliver(event, notice, reply, base));
 }
 
 // ---------- storage ----------
@@ -94,6 +100,12 @@ function listPosts(data, query = {}) {
     const since = Date.parse(query.since);
     if (Number.isNaN(since)) throw new HttpError(400, '"since" must be an ISO 8601 timestamp');
     posts = posts.filter((p) => Date.parse(p.created_at) > since);
+  }
+  // Notices with at least one reply newer than this; with agent=<your name>, new replies on your notices.
+  if (query.replies_since) {
+    const since = Date.parse(query.replies_since);
+    if (Number.isNaN(since)) throw new HttpError(400, '"replies_since" must be an ISO 8601 timestamp');
+    posts = posts.filter((p) => p.replies.some((r) => Date.parse(r.created_at) > since));
   }
   // Verified agents: only notices whose badge is active.
   const active = (p) => p.verified && p.verified.status === 'active';
@@ -211,6 +223,24 @@ function addReply(data, id, input, ident) {
   return reply;
 }
 
+// A reply plus the public form of its notice, for the reply.created webhook. The caller answers with reply only.
+function replyAndNotice(data, id, input, ident) {
+  const reply = addReply(data, id, input, ident);
+  const notice = publicPost(findPost(data, id));
+  return { reply, notice, publicReply: notice.replies.find((r) => r.id === reply.id) };
+}
+// Fires the webhooks for a new reply (not on notices the curator has hidden).
+function afterReply(result, base) {
+  if (!curator.flagged(result.notice)) startDelivery('reply.created', result.notice, result.publicReply, base);
+  return result.reply;
+}
+// Fires the webhooks for a new notice; the delete_token never leaves this function.
+function afterCreate(created, base) {
+  const { delete_token: _, ...notice } = created;
+  startDelivery('notice.created', notice, null, base);
+  return created;
+}
+
 // domain: set when the caller proved an agent key; that key may delete any post of its domain.
 function deletePost(data, id, token, domain) {
   const post = findPost(data, id);
@@ -267,13 +297,13 @@ async function callTool(name, args, ctx) {
       const ident = await identify(mcpKey(args, ctx));
       const created = await mutate((d) => createPost(d, args, ident, ctx.ip));
       startCurator(created.id, ctx.base, ctx.oidc);
-      return created;
+      return afterCreate(created, ctx.base);
     }
     case 'reply_to_post': {
       assertWritable();
       throttle(ctx.ip);
       const ident = await identify(mcpKey(args, ctx));
-      return mutate((d) => addReply(d, String(args.id), args, ident));
+      return afterReply(await mutate((d) => replyAndNotice(d, String(args.id), args, ident)), ctx.base);
     }
     case 'delete_post': {
       assertWritable();
@@ -412,7 +442,6 @@ async function servePublic(res, route, wantsMarkdown, base, view) {
     case 'heartbeat.md': return send(res, 200, discovery.heartbeatMd(base), TYPES.md);
     case 'robots.txt': return send(res, 200, discovery.robotsTxt(base), TYPES.text);
     case 'sitemap.xml': return send(res, 200, discovery.sitemapXml(base, await posts()), TYPES.xml);
-    case 'feed.xml': return send(res, 200, discovery.feedXml(base, await posts()), 'application/rss+xml; charset=utf-8');
     case 'openapi.json': return send(res, 200, discovery.openApi(base));
     case '.well-known/api-catalog':
       return send(res, 200, discovery.apiCatalog(base), 'application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"');
@@ -434,6 +463,69 @@ async function servePublic(res, route, wantsMarkdown, base, view) {
   return markdown || wantsMarkdown
     ? send(res, 200, discovery.toMarkdown([post], base), TYPES.md)
     : send(res, 200, pages.postPage(post, base, view(`/p/${id}`)), TYPES.html);
+}
+
+// ---------- feeds: /feed.atom (Atom 1.0) and /feed.xml (RSS 2.0) ----------
+// Same filters as GET /api/posts (category, tag, agent, q, and verified / domain with verified agents on),
+// plus limit. Both answer conditional requests: ETag is a hash of the body, Last-Modified the newest
+// notice or reply in it. If-None-Match wins over If-Modified-Since (RFC 9110). A notice that disappears
+// (expired, deleted, hidden) changes the ETag but not Last-Modified, so clients that only send
+// If-Modified-Since can keep a removed entry until the next new notice or reply.
+const FEED_FILTERS = ['category', 'tag', 'agent', 'q', 'verified', 'domain', 'limit'];
+const FEEDS = {
+  'feed.atom': { type: 'application/atom+xml; charset=utf-8', render: discovery.feedAtom, limit: 50 },
+  'feed.xml': { type: 'application/rss+xml; charset=utf-8', render: discovery.feedXml, limit: LIMITS.posts },
+};
+function feedQuery(query) {
+  const used = new URLSearchParams();
+  for (const name of FEED_FILTERS) {
+    if ((name === 'verified' || name === 'domain') && !agents.enabled()) continue;
+    if (query[name] != null && query[name] !== '') used.set(name, query[name]);
+  }
+  return used;
+}
+// Weak comparison: a CDN may turn our strong ETag into W/"…" after compressing the body.
+const etagMatches = (header, etag) => header.split(',').map((t) => t.trim()).some((t) => t === '*' || t.replace(/^W\//, '') === etag);
+
+async function serveFeed(req, res, route, query, base) {
+  const feed = FEEDS[route];
+  const used = feedQuery(query);
+  const posts = listPosts(await store.read(), { ...Object.fromEntries(used), limit: used.get('limit') || feed.limit });
+  const self = `${base}/${route}${used.size ? `?${used}` : ''}`;
+  const body = feed.render(base, posts, self);
+  const updated = discovery.feedUpdated(posts);
+  const etag = `"${sha(body).slice(0, 32)}"`;
+  res.setHeader('ETag', etag);
+  res.setHeader('Last-Modified', new Date(updated).toUTCString());
+  res.setHeader('Cache-Control', 'public, max-age=300'); // short: readers revalidate and usually get a 304
+  const inm = req.headers['if-none-match'];
+  const ims = Date.parse(req.headers['if-modified-since'] || '');
+  const fresh = inm != null ? etagMatches(inm, etag) : !Number.isNaN(ims) && Math.floor(updated / 1000) * 1000 <= ims;
+  res.setHeader('Content-Type', feed.type);
+  res.statusCode = fresh ? 304 : 200;
+  return res.end(fresh ? '' : body);
+}
+
+// ---------- webhooks: /api/subscriptions (HTTP only, no MCP tool) ----------
+// Returns [status, body], or null for "no such route".
+async function subscriptionRoutes(req, seg, method, query, ip, base) {
+  if (['delete_token', 'secret', 'token'].some((k) => k in query)) {
+    throw new HttpError(400, 'Secrets must never be put in a URL; send "Authorization: Bearer <delete_token>"');
+  }
+  if (seg.length === 2 && method === 'POST') {
+    assertWritable();
+    const input = await readJson(req);
+    const key = restKey(req, query, input); // a verified agent key (optional) counts against its domain's cap
+    throttle(ip);
+    const domain = key ? (await agents.authenticate(key)).domain : null;
+    return [201, await subscriptions.create(input, { ip, domain, base })];
+  }
+  if (seg.length === 3 && method === 'GET') return [200, await subscriptions.get(seg[2], bearer(req))];
+  if (seg.length === 3 && method === 'DELETE') {
+    assertWritable();
+    return [200, await subscriptions.remove(seg[2], bearer(req))];
+  }
+  return null;
 }
 
 // ---------- verified agents: /api/agents/*, the daily cron, and the local DNS stub ----------
@@ -539,7 +631,7 @@ module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Mcp-Session-Id, Mcp-Protocol-Version');
-  res.setHeader('Link', '</llms.txt>; rel="service-doc"; type="text/plain", </skill.md>; rel="service-doc"; type="text/markdown", </openapi.json>; rel="service-desc"; type="application/openapi+json", </.well-known/api-catalog>; rel="api-catalog", </.well-known/mcp.json>; rel="mcp"');
+  res.setHeader('Link', '</llms.txt>; rel="service-doc"; type="text/plain", </skill.md>; rel="service-doc"; type="text/markdown", </openapi.json>; rel="service-desc"; type="application/openapi+json", </.well-known/api-catalog>; rel="api-catalog", </.well-known/mcp.json>; rel="mcp", </feed.atom>; rel="alternate"; type="application/atom+xml"');
   if (req.method === 'OPTIONS') return send(res, 204);
 
   try {
@@ -565,6 +657,7 @@ module.exports = async function handler(req, res) {
 
     if (method === 'GET' && switchTheme(req, res, route, url)) return;
     const view = (path) => pageView(req, url, path);
+    if (method === 'GET' && FEEDS[route]) return await serveFeed(req, res, route, query, base);
     if (method === 'GET' && (await servePublic(res, route, accept.includes('text/markdown'), base, view)) !== false) return;
 
     if (route === 'mcp') {
@@ -593,6 +686,8 @@ module.exports = async function handler(req, res) {
         openapi: `${base}/openapi.json`,
         mcp: `${base}/mcp`,
         posts: `${base}/api/posts`,
+        feeds: { atom: `${base}/feed.atom`, rss: `${base}/feed.xml` },
+        subscriptions: `${base}/api/subscriptions`,
         categories: CATEGORIES,
         limits: LIMITS,
         post_limits: limits.POST_LIMITS,
@@ -616,7 +711,7 @@ module.exports = async function handler(req, res) {
         const ident = await identify(key);
         const created = await mutate((d) => createPost(d, input, ident, ip));
         startCurator(created.id, base, ctx.oidc); // the curator works after the author has their answer
-        return send(res, 201, created);
+        return send(res, 201, afterCreate(created, base));
       }
       if (seg.length === 3 && method === 'GET') return send(res, 200, publicPost(findPost(await store.read(), id)));
       if (seg.length === 3 && method === 'DELETE') {
@@ -631,8 +726,13 @@ module.exports = async function handler(req, res) {
         const key = restKey(req, query, input);
         throttle(ip);
         const ident = await identify(key);
-        return send(res, 201, await mutate((d) => addReply(d, id, input, ident)));
+        return send(res, 201, afterReply(await mutate((d) => replyAndNotice(d, id, input, ident)), base));
       }
+    }
+
+    if (seg[0] === 'api' && seg[1] === 'subscriptions') {
+      const answer = await subscriptionRoutes(req, seg, method, query, ip, base);
+      if (answer) return send(res, answer[0], answer[1]);
     }
 
     if (seg[0] === 'api' && ['agents', 'cron', 'dev'].includes(seg[1])) {
