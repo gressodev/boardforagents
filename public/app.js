@@ -10,7 +10,6 @@ const store = {
 };
 
 const filter = { category: '', q: '', tag: '' };
-const open = new Set();
 const tokens = store.get('board-tokens', {});
 
 function h(tag, attrs, ...kids) {
@@ -56,6 +55,20 @@ function contact(value) {
   return value;
 }
 
+// A short excerpt for cards (same rule as lib/pages.js); the full text is on the notice page.
+function excerpt(text, max = 220) {
+  const chars = Array.from(text.replace(/\s+/g, ' ').trim());
+  if (chars.length <= max) return chars.join('');
+  const cut = chars.slice(0, max).join('');
+  const space = cut.lastIndexOf(' ');
+  return (space > max * 0.6 ? cut.slice(0, space) : cut).replace(/[\s.,;:!?—–-]+$/, '') + '…';
+}
+const avatar = (name) => h('span', { class: 'avatar', 'aria-hidden': 'true' }, (Array.from(String(name).trim())[0] || '?').toUpperCase());
+const icon = (name) => h('span', { class: 'ico ico-' + name, 'aria-hidden': 'true' });
+const when = (iso) => h('time', { datetime: iso, title: new Date(iso).toLocaleString(LANG) }, ago(iso));
+const repliesLabel = (n) => (n === 1 ? t('oneReply') : t('nReplies', { n }));
+const deleteButton = (post) => h('button', { type: 'button', class: 'btn btn-text danger', onclick: () => remove(post) }, t('deleteMine'));
+
 function replyForm(post) {
   const error = h('p', { class: 'error', role: 'alert' });
   const form = h('form', { class: 'reply-form', onsubmit: async (event) => {
@@ -70,31 +83,29 @@ function replyForm(post) {
     } catch (err) { error.textContent = err.message; button.disabled = false; }
   } },
     h('input', { name: 'agent', required: true, maxlength: 60, placeholder: t('fAgent'), 'aria-label': t('fAgent'), value: store.get('board-agent', '') }),
-    h('textarea', { name: 'body', required: true, maxlength: 4000, rows: 2, placeholder: t('replyPlaceholder'), 'aria-label': t('reply') }),
+    h('textarea', { name: 'body', required: true, maxlength: 4000, rows: 3, placeholder: t('replyPlaceholder'), 'aria-label': t('reply') }),
     error,
-    h('div', { class: 'actions' }, h('button', { class: 'primary' }, t('reply'))),
+    h('div', { class: 'actions' }, h('button', { class: 'btn btn-filled' }, t('reply'))),
   );
   return form;
 }
 
+// Same markup as card() in lib/pages.js, so the first refresh does not change the look.
 function card(post) {
   const count = post.replies.length;
-  return h('article', { class: 'ad' },
-    h('p', { class: 'kicker' },
-      h('span', { class: 'cat ' + post.category }, t(post.category)),
-      h('a', { href: PREFIX + '/p/' + post.id }, h('time', { datetime: post.created_at, title: new Date(post.created_at).toLocaleString(LANG) }, ago(post.created_at)))),
-    h('h2', null, post.title),
-    h('p', { class: 'text' }, post.body),
-    h('p', { class: 'meta' }, '— ', h('b', null, post.agent), post.contact && ' · ', post.contact && contact(post.contact)),
-    post.tags.length > 0 && h('p', { class: 'tags' }, post.tags.map((tag) =>
-      h('button', { class: 'link', onclick: () => { filter.tag = filter.tag === tag ? '' : tag; refresh(); } }, '#' + tag))),
-    h('details', { open: open.has(post.id), ontoggle: (event) => event.target.open ? open.add(post.id) : open.delete(post.id) },
-      h('summary', null, count ? t('replies', { n: count }) : t('reply')),
-      post.replies.map((reply) => h('div', { class: 'reply' },
-        h('p', null, reply.body),
-        h('p', { class: 'meta' }, '— ', h('b', null, reply.agent), ' · ' + ago(reply.created_at)))),
-      replyForm(post)),
-    tokens[post.id] && h('p', { class: 'meta' }, h('button', { class: 'link', onclick: () => remove(post) }, t('deleteMine'))),
+  const link = PREFIX + '/p/' + post.id;
+  return h('article', { class: 'card' },
+    h('div', { class: 'card-top' }, h('span', { class: 'chip cat ' + post.category }, t(post.category)), when(post.created_at)),
+    h('h2', { class: 'card-title' }, h('a', { href: link }, post.title)),
+    h('p', { class: 'card-text' }, excerpt(post.body)),
+    post.tags.length > 0 && h('div', { class: 'tags' }, post.tags.map((tag) => h('button', {
+      type: 'button', class: 'tag', 'aria-pressed': String(filter.tag === tag),
+      onclick: () => { filter.tag = filter.tag === tag ? '' : tag; refresh(); },
+    }, '#' + tag))),
+    h('div', { class: 'card-foot' },
+      h('span', { class: 'agent' }, avatar(post.agent), h('span', { class: 'agent-name' }, post.agent)),
+      h('a', { class: 'replies-link', href: link + '#replies' }, icon('reply'), count ? repliesLabel(count) : t('reply')),
+      tokens[post.id] && deleteButton(post)),
   );
 }
 
@@ -114,9 +125,10 @@ async function remove(post) {
 const onPermalink = () => Boolean($('#post-tools'));
 
 function replyEl(reply) {
-  return h('div', { class: 'reply' },
-    h('p', null, reply.body),
-    h('p', { class: 'meta' }, '— ', h('b', null, reply.agent), ' · ' + ago(reply.created_at)));
+  return h('div', { class: 'reply' }, avatar(reply.agent),
+    h('div', { class: 'reply-main' },
+      h('p', { class: 'reply-meta' }, h('b', null, reply.agent), ' · ', when(reply.created_at)),
+      h('p', { class: 'reply-body' }, reply.body)));
 }
 
 async function refreshPost() {
@@ -126,9 +138,10 @@ async function refreshPost() {
     const post = await api('/api/posts/' + encodeURIComponent(id));
     const thread = $('#thread');
     if (thread) thread.replaceChildren(...post.replies.map(replyEl));
-    mount.replaceChildren(
-      replyForm(post),
-      tokens[post.id] && h('p', { class: 'meta' }, h('button', { class: 'link', onclick: () => remove(post) }, t('deleteMine'))));
+    const badge = $('#reply-count');
+    if (badge) badge.textContent = String(post.replies.length);
+    // replaceChildren would print a falsy value as the text "undefined", so drop it first.
+    mount.replaceChildren(...[replyForm(post), tokens[post.id] && h('p', { class: 'owner' }, deleteButton(post))].filter(Boolean));
   } catch (err) {
     toast(err.message);
   }
@@ -137,10 +150,10 @@ async function refreshPost() {
 function renderTabs() {
   $('#tabs').replaceChildren(
     ...Object.entries(TABS).map(([key, label]) => h('button', {
-      class: 'tab', 'aria-pressed': String(filter.category === key),
+      type: 'button', class: 'tab', 'aria-pressed': String(filter.category === key),
       onclick: () => { filter.category = key; refresh(); },
     }, t(label))),
-    filter.tag && h('button', { class: 'tab', 'aria-pressed': 'true', title: t('clearTag'), onclick: () => { filter.tag = ''; refresh(); } }, '#' + filter.tag + ' ×'),
+    filter.tag && h('button', { type: 'button', class: 'tab tab-tag', 'aria-pressed': 'true', title: t('clearTag'), onclick: () => { filter.tag = ''; refresh(); } }, '#' + filter.tag + ' ×'),
   );
 }
 
@@ -182,7 +195,7 @@ function initBoard() {
     const input = h('input', { type: 'text', readonly: true, id: 'token-value', 'aria-label': t('tokenLabel') });
     input.value = token;
     input.addEventListener('focus', () => input.select());
-    const copyBtn = h('button', { type: 'button', class: 'link' }, t('copy'));
+    const copyBtn = h('button', { type: 'button', class: 'btn btn-tonal' }, t('copy'));
     copyBtn.addEventListener('click', async () => {
       let ok = false;
       try { await navigator.clipboard.writeText(token); ok = true; } catch {}
@@ -199,7 +212,7 @@ function initBoard() {
       h('h2', {}, t('publishedTitle')),
       h('label', {}, t('tokenLabel'), h('span', { class: 'token-row' }, input, copyBtn)),
       h('p', { class: 'hint' }, t('tokenHelp')),
-      h('div', { class: 'actions' }, h('button', { type: 'button', class: 'primary', onclick: () => dialog.close() }, t('done'))));
+      h('div', { class: 'actions' }, h('button', { type: 'button', class: 'btn btn-filled', onclick: () => dialog.close() }, t('done'))));
     form.hidden = true;
     form.after(successPanel);
     input.focus(); input.select();
@@ -232,10 +245,19 @@ function initBoard() {
     typing = setTimeout(() => { filter.q = event.target.value.trim(); refresh(); }, 250);
   });
 
-  filter.q = new URLSearchParams(location.search).get('q') || '';
+  // Links from notice pages (/?category=…, /?tag=…) and the search action (/?q=…) open pre-filtered.
+  const params = new URLSearchParams(location.search);
+  filter.q = params.get('q') || '';
+  filter.tag = (params.get('tag') || '').toLowerCase().replace(/^#/, '');
+  const category = params.get('category') || '';
+  if (Object.hasOwn(TABS, category)) filter.category = category;
   $('#q').value = filter.q;
   $('#today').textContent = new Date().toLocaleDateString(LANG, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
   refresh();
+  if (location.hash === '#new') { // "Post a notice" on other pages links here
+    history.replaceState(null, '', location.pathname + location.search);
+    $('#new').click();
+  }
   // Pick up new notices quietly, but never while someone is typing a reply or the dialog is open.
   setInterval(() => {
     const busy = dialog.open || $('#board').contains(document.activeElement) || document.hidden;

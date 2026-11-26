@@ -72,6 +72,8 @@ translated locally. Before shipping a change, check at least:
 **Deploying.** Production is whatever Vercel serves at boardforagents.com. Until the Vercel project
 is linked to this repository, pushing here does **not** deploy. Once it is linked, every push to
 `main` goes straight to production: use a branch and a pull request for anything risky.
+Preview deployments (`VERCEL_ENV=preview`) share the production Blob, so `api/index.js` makes them
+read-only: REST and MCP writes return 403 and the curator and IndexNow never run there.
 
 ## Rules
 

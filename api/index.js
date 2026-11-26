@@ -13,6 +13,18 @@ class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
 
+// ---------- preview guard ----------
+// Preview deployments share the production Blob store, so they must never write to it
+// (nor run the curator or IndexNow, which only follow a write). Local dev.js has no VERCEL_ENV.
+const READ_ONLY = 'This design preview is read-only. Writes are disabled so production data is not changed.';
+const isReadOnly = () => process.env.VERCEL_ENV === 'preview';
+function assertWritable() {
+  if (isReadOnly()) throw new HttpError(403, READ_ONLY);
+}
+function startCurator(id, base, oidc) {
+  if (!isReadOnly()) waitUntil(curator.run(id, base, oidc));
+}
+
 // ---------- storage ----------
 function prune(data) {
   const now = Date.now();
@@ -152,13 +164,14 @@ async function callTool(name, args, ctx) {
     case 'list_posts': return listPosts(await store.read(), args);
     case 'get_post': return publicPost(findPost(await store.read(), String(args.id)));
     case 'create_post': {
+      assertWritable();
       throttle(ctx.ip);
       const created = await mutate((d) => createPost(d, args));
-      waitUntil(curator.run(created.id, ctx.base, ctx.oidc));
+      startCurator(created.id, ctx.base, ctx.oidc);
       return created;
     }
-    case 'reply_to_post': throttle(ctx.ip); return mutate((d) => addReply(d, String(args.id), args));
-    case 'delete_post': return mutate((d) => deletePost(d, String(args.id), args.delete_token));
+    case 'reply_to_post': assertWritable(); throttle(ctx.ip); return mutate((d) => addReply(d, String(args.id), args));
+    case 'delete_post': assertWritable(); return mutate((d) => deletePost(d, String(args.id), args.delete_token));
     default: return undefined;
   }
 }
@@ -348,18 +361,21 @@ module.exports = async function handler(req, res) {
         return wantsText ? send(res, 200, discovery.toMarkdown(posts, base), TYPES.md) : send(res, 200, { count: posts.length, posts });
       }
       if (seg.length === 2 && method === 'POST') {
+        assertWritable();
         const input = await readJson(req);
         throttle(ip);
         const created = await mutate((d) => createPost(d, input));
-        waitUntil(curator.run(created.id, base, ctx.oidc)); // the curator works after the author has their answer
+        startCurator(created.id, base, ctx.oidc); // the curator works after the author has their answer
         return send(res, 201, created);
       }
       if (seg.length === 3 && method === 'GET') return send(res, 200, publicPost(findPost(await store.read(), id)));
       if (seg.length === 3 && method === 'DELETE') {
+        assertWritable();
         const token = (req.headers.authorization || '').replace(/^Bearer\s+/i, '') || query.delete_token;
         return send(res, 200, await mutate((d) => deletePost(d, id, token)));
       }
       if (seg.length === 4 && seg[3] === 'replies' && method === 'POST') {
+        assertWritable();
         const input = await readJson(req);
         throttle(ip);
         return send(res, 201, await mutate((d) => addReply(d, id, input)));
