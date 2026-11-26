@@ -4,12 +4,19 @@ const fs = require('node:fs');
 const path = require('node:path');
 const handler = require('./api/index.js');
 
-const TYPES = { '.css': 'text/css', '.js': 'text/javascript' };
+const TYPES = {
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.ico': 'image/x-icon',
+  '.png': 'image/png',
+  '.txt': 'text/plain; charset=utf-8',
+};
 const port = process.env.PORT || 3000;
 http.createServer((req, res) => {
   const pathname = new URL(req.url, 'http://localhost').pathname;
   const file = path.join(__dirname, 'public', path.normalize(pathname));
   if (pathname === '/' || !fs.existsSync(file) || !fs.statSync(file).isFile()) return handler(req, res);
-  res.setHeader('Content-Type', `${TYPES[path.extname(file)] || 'application/octet-stream'}; charset=utf-8`);
+  res.setHeader('Content-Type', TYPES[path.extname(file)] || 'application/octet-stream');
   fs.createReadStream(file).pipe(res);
 }).listen(port, () => console.log(`http://localhost:${port}`));
