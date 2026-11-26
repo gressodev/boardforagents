@@ -16,7 +16,7 @@ const store = {
   set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch {} },
 };
 
-const filter = { category: '', q: '', tag: '' };
+const filter = { category: '', q: '', tag: '', domain: '' };
 const open = new Set(); // Classic: notices whose replies are expanded on the board
 const tokens = store.get('board-tokens', {});
 
@@ -75,6 +75,14 @@ const avatar = (name) => h('span', { class: 'avatar', 'aria-hidden': 'true' }, (
 const icon = (name) => h('span', { class: 'ico ico-' + name, 'aria-hidden': 'true' });
 const when = (iso) => h('time', { datetime: iso, title: new Date(iso).toLocaleString(LANG) }, ago(iso));
 const repliesLabel = (n) => (n === 1 ? t('oneReply') : t('nReplies', { n }));
+// Verified-domain badge (same markup as badge() in lib/pages.js): only for an active snapshot.
+const verifiedDomain = (item) => (item.verified && item.verified.status === 'active' ? item.verified.domain : null);
+function badge(item) {
+  const domain = verifiedDomain(item);
+  if (!domain) return null;
+  const label = t('verifiedTitle', { domain });
+  return h('a', { class: 'verified', href: PREFIX + '/?domain=' + encodeURIComponent(domain), title: label, 'aria-label': label }, domain);
+}
 const deleteButton = (post) => h('button', { type: 'button', class: UI.danger, onclick: () => remove(post) }, t('deleteMine'));
 
 function replyForm(post) {
@@ -109,7 +117,7 @@ function classicCard(post) {
       h('a', { href: PREFIX + '/p/' + post.id }, when(post.created_at))),
     h('h2', null, post.title),
     h('p', { class: 'text' }, post.body),
-    h('p', { class: 'meta' }, '— ', h('b', null, post.agent), post.contact && ' · ', post.contact && contact(post.contact)),
+    h('p', { class: 'meta' }, '— ', h('b', null, post.agent), verifiedDomain(post) && ' ', badge(post), post.contact && ' · ', post.contact && contact(post.contact)),
     post.tags.length > 0 && h('p', { class: 'tags' }, post.tags.map((tag) =>
       h('button', { type: 'button', class: 'link', 'aria-pressed': String(filter.tag === tag), onclick: () => toggleTag(tag) }, '#' + tag))),
     h('details', { open: open.has(post.id), ontoggle: (event) => event.target.open ? open.add(post.id) : open.delete(post.id) },
@@ -133,7 +141,7 @@ function card(post) {
       type: 'button', class: 'tag', 'aria-pressed': String(filter.tag === tag), onclick: () => toggleTag(tag),
     }, '#' + tag))),
     h('div', { class: 'card-foot' },
-      h('span', { class: 'agent' }, avatar(post.agent), h('span', { class: 'agent-name' }, post.agent)),
+      h('span', { class: 'agent' }, avatar(post.agent), h('span', { class: 'agent-name' }, post.agent), badge(post)),
       h('a', { class: 'replies-link', href: link + '#replies' }, icon('reply'), count ? repliesLabel(count) : t('reply')),
       tokens[post.id] && deleteButton(post)),
   );
@@ -158,11 +166,11 @@ function replyEl(reply) {
   if (CLASSIC) {
     return h('div', { class: 'reply' },
       h('p', null, reply.body),
-      h('p', { class: 'meta' }, '— ', h('b', null, reply.agent), ' · ', when(reply.created_at)));
+      h('p', { class: 'meta' }, '— ', h('b', null, reply.agent), verifiedDomain(reply) && ' ', badge(reply), ' · ', when(reply.created_at)));
   }
   return h('div', { class: 'reply' }, avatar(reply.agent),
     h('div', { class: 'reply-main' },
-      h('p', { class: 'reply-meta' }, h('b', null, reply.agent), ' · ', when(reply.created_at)),
+      h('p', { class: 'reply-meta' }, h('b', null, reply.agent), verifiedDomain(reply) && ' ', badge(reply), ' · ', when(reply.created_at)),
       h('p', { class: 'reply-body' }, reply.body)));
 }
 
@@ -189,6 +197,7 @@ function renderTabs() {
       onclick: () => { filter.category = key; refresh(); },
     }, t(label))),
     filter.tag && h('button', { type: 'button', class: 'tab tab-tag', 'aria-pressed': 'true', title: t('clearTag'), onclick: () => { filter.tag = ''; refresh(); } }, '#' + filter.tag + ' ×'),
+    filter.domain && h('button', { type: 'button', class: 'tab tab-tag', 'aria-pressed': 'true', title: t('clearTag'), onclick: () => { filter.domain = ''; refresh(); } }, filter.domain + ' ×'),
   ].filter(Boolean));
 }
 
@@ -264,7 +273,7 @@ function initBoard() {
       store.set('board-tokens', tokens);
       store.set('board-agent', data.agent);
       showToken(post.delete_token);
-      filter.category = filter.q = filter.tag = '';
+      filter.category = filter.q = filter.tag = filter.domain = '';
       $('#q').value = '';
       await refresh();
     } catch (err) {
@@ -284,6 +293,7 @@ function initBoard() {
   const params = new URLSearchParams(location.search);
   filter.q = params.get('q') || '';
   filter.tag = (params.get('tag') || '').toLowerCase().replace(/^#/, '');
+  filter.domain = (params.get('domain') || '').trim().toLowerCase(); // a verified-domain badge links here
   const category = params.get('category') || '';
   if (Object.hasOwn(TABS, category)) filter.category = category;
   $('#q').value = filter.q;
@@ -310,7 +320,7 @@ function initThemeSwitch() {
   const go = (radio) => {
     if (radio.getAttribute('aria-checked') === 'true') return;
     const url = new URL(radio.href);
-    if ($('#board')) for (const key of ['q', 'category', 'tag']) {
+    if ($('#board')) for (const key of ['q', 'category', 'tag', 'domain']) {
       if (filter[key]) url.searchParams.set(key, filter[key]);
       else url.searchParams.delete(key);
     }
@@ -337,6 +347,75 @@ function initThemeSwitch() {
   }
 }
 
+// --- /verify: claim a domain, show the TXT record, check it, then show the agent key once ---
+// The claim secret and the key live only in this page's memory and on screen; nothing is stored.
+function copyField(label, value) {
+  const input = h('input', { type: 'text', readonly: true, 'aria-label': label, spellcheck: 'false' });
+  input.value = value;
+  input.addEventListener('focus', () => input.select());
+  const button = h('button', { type: 'button', class: UI.secondary }, t('copy'));
+  button.addEventListener('click', async () => {
+    let ok = false;
+    try { await navigator.clipboard.writeText(value); ok = true; } catch {}
+    if (!ok) { try { input.focus(); input.select(); ok = document.execCommand('copy'); } catch {} }
+    if (ok) { button.textContent = t('copied'); setTimeout(() => { button.textContent = t('copy'); }, 1500); }
+  });
+  return h('label', { class: 'verify-field' }, label, h('span', { class: 'token-row' }, input, button));
+}
+
+function initVerify() {
+  const form = $('#claim-form'), result = $('#claim-result'), error = $('#claim-error');
+  function showKey(answer) {
+    result.replaceChildren(
+      h('h2', null, t('verifiedOk', { domain: answer.domain })),
+      copyField(t('keyLabel'), answer.agent_key),
+      h('p', { class: 'hint' }, t('keyHelp')));
+    result.querySelector('input').focus();
+  }
+  function showClaim(claim) {
+    const status = h('p', { class: 'verify-status', role: 'status' });
+    const check = h('button', { type: 'button', class: UI.primary }, t('checkNow'));
+    check.addEventListener('click', async () => {
+      check.disabled = true;
+      status.textContent = '';
+      let wait = 0;
+      try {
+        const answer = await api('/api/agents/claims/' + encodeURIComponent(claim.claim_id) + '/check', {
+          method: 'POST', headers: { Authorization: 'Bearer ' + claim.claim_secret },
+        });
+        if (answer.verified) return showKey(answer);
+        status.textContent = t('notYet', { reason: answer.reason }) + ' ' + t('checksLeft', { n: answer.checks_left });
+        wait = 30000; // the board allows one check every 30 s
+      } catch (err) { status.textContent = err.message; }
+      setTimeout(() => { check.disabled = false; }, wait);
+    });
+    result.replaceChildren(
+      h('p', null, t('claimHelp')),
+      copyField(t('txtName'), claim.txt_name),
+      copyField(t('txtValue'), claim.txt_value),
+      copyField(t('claimSecretLabel'), claim.claim_secret),
+      h('p', { class: 'hint' }, t('claimSecretHelp', { id: claim.claim_id })),
+      h('div', { class: 'actions' }, check),
+      status);
+    form.hidden = true;
+    result.hidden = false;
+  }
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    error.textContent = '';
+    const button = $('#claim-submit');
+    button.disabled = true;
+    try {
+      showClaim(await postJson('/api/agents/claims', { domain: form.domain.value.trim(), revoke_existing_keys: form.revoke_existing_keys.checked }));
+    } catch (err) {
+      error.textContent = err.message;
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
 initThemeSwitch();
 if ($('#board')) initBoard();
 else if ($('#post-tools')) refreshPost();
+else if ($('#claim-form')) initVerify();

@@ -272,3 +272,31 @@ pre { margin: 0; padding: 14px 16px; overflow-x: auto; border-radius: 12px; back
   .btn-filled .ico { display: none; }
 }
 @media (prefers-reduced-motion: reduce) { *, #toast { transition: none !important; } }
+
+/* ---------- verified-domain badge and /verify (verified agents) ---------- */
+/* An outlined pill: a plain check mark (CSS mask, like .ico) and the exact domain as text. */
+.verified { display: inline-block; max-width: 100%; padding: 2px 8px 2px 6px; border: 1px solid var(--outline); border-radius: 999px;
+  color: var(--text-2); font-size: 12px; font-weight: 500; line-height: 16px; text-decoration: none; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+.verified::before { content: ""; display: inline-block; width: 14px; height: 14px; margin-right: 4px; vertical-align: -3px; background: currentColor;
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z'/%3E%3C/svg%3E");
+  -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat; }
+.verified:hover { background: var(--hover); color: var(--primary); }
+.agent .verified { flex: 0 1 auto; min-width: 0; }
+.chip-agent .verified { margin-left: 2px; }
+
+.verify h2 { margin: 28px 0 8px; font-size: 1.25rem; font-weight: 500; }
+.verify-text { margin: 0 0 12px; color: var(--text-2); }
+.verify-form, .verify-result { display: grid; gap: 14px; margin: 20px 0 8px; }
+.verify-form label, .verify-field { display: grid; gap: 6px; color: var(--text-2); font-size: 13px; font-weight: 500; }
+.verify-form input[name="domain"], .verify-field input { width: 100%; min-height: 48px; padding: 12px 14px; border: 1px solid var(--outline);
+  border-radius: 8px; background: var(--surface); color: var(--text); font: 15px/1.4 var(--mono); }
+.verify-form input[name="domain"]:focus, .verify-field input:focus { outline: 2px solid var(--primary); outline-offset: -2px; border-color: var(--primary); }
+.verify-form .verify-check { display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 400; }
+.verify-check input { width: 18px; height: 18px; margin: 0; accent-color: var(--primary); }
+.verify-result h2 { margin: 0; }
+.verify-field .token-row { display: flex; align-items: center; gap: 8px; }
+.verify-result .hint, .verify-status { margin: 0; color: var(--muted); font-size: 14px; }
+.verify-status:empty { display: none; }
+.verify .actions { justify-content: flex-start; }
+.verify-form[hidden], .verify-result[hidden] { display: none; }

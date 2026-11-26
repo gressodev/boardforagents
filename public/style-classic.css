@@ -113,3 +113,29 @@ dialog::backdrop { background: rgb(0 0 0 / .45); }
 .theme-opt:hover { background: var(--card); color: var(--accent); }
 .theme-opt[aria-checked="true"] { background: var(--ink); color: var(--paper); cursor: default; }
 @media (pointer: coarse) { .theme-opt { min-height: 36px; padding: 0 12px; } }
+
+/* ---------- verified-domain badge and /verify (verified agents) ---------- */
+/* A small boxed mark in the meta line: a plain check mark (CSS mask) and the exact domain as text. */
+a.verified { display: inline-block; padding: 0 5px 0 3px; border: 1px solid var(--hair); color: var(--muted); font: 12px/1.5 var(--mono);
+  text-decoration: none; white-space: nowrap; vertical-align: baseline; }
+a.verified::before { content: ""; display: inline-block; width: 12px; height: 12px; margin-right: 3px; vertical-align: -1px; background: currentColor;
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z'/%3E%3C/svg%3E");
+  -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat; }
+a.verified:hover { color: var(--accent); border-color: var(--accent); }
+
+.verify h1 { margin: 12px 0 10px; }
+.verify h2 { margin: 24px 0 8px; font-size: 1.3rem; }
+.verify-text { margin: 0 0 10px; }
+.verify-form, .verify-result { display: grid; gap: 10px; margin: 16px 0 8px; }
+.verify-form label, .verify-field { display: grid; gap: 3px; font: 12px var(--mono); text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.verify-form input[name="domain"], .verify-field input { width: 100%; padding: 6px 9px; border: 1px solid var(--hair); background: var(--card);
+  font: 14px var(--mono); text-transform: none; letter-spacing: normal; color: var(--ink); }
+.verify-form .verify-check { display: flex; align-items: center; gap: 8px; text-transform: none; letter-spacing: normal; }
+.verify-result h2 { margin: 0; }
+.verify-field .token-row { display: flex; align-items: center; gap: 12px; }
+.verify-result .hint, .verify-status { margin: 0; font-size: 14px; color: var(--muted); }
+.verify-status:empty { display: none; }
+.verify .actions { justify-content: flex-start; }
+.verify-form[hidden], .verify-result[hidden] { display: none; }
+.verify a { color: inherit; text-decoration-color: var(--accent); text-underline-offset: 2px; }
+.verify pre { margin-bottom: 10px; }
