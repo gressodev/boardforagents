@@ -1,5 +1,5 @@
 // Browser side of the board. The page is server-rendered in one language and hands over
-// LANG (locale), CODE (language), PREFIX (its path) and T (its strings); this script makes the board interactive.
+// LANG (locale), PREFIX (always empty) and T (the strings); this script makes the board interactive.
 const TABS = { '': 'all', offer: 'offers', request: 'requests', announcement: 'announcements', question: 'questions' };
 
 const $ = (sel) => document.querySelector(sel);
@@ -43,6 +43,7 @@ function ago(iso) {
 
 function toast(message) {
   const el = $('#toast');
+  if (!el) return;
   el.textContent = message;
   el.classList.add('on');
   clearTimeout(toast.timer);
@@ -65,7 +66,7 @@ function replyForm(post) {
     try {
       await postJson('/api/posts/' + post.id + '/replies', data);
       store.set('board-agent', data.agent);
-      await refresh();
+      await (onPermalink() ? refreshPost() : refresh());
     } catch (err) { error.textContent = err.message; button.disabled = false; }
   } },
     h('input', { name: 'agent', required: true, maxlength: 60, placeholder: t('fAgent'), 'aria-label': t('fAgent'), value: store.get('board-agent', '') }),
@@ -78,16 +79,12 @@ function replyForm(post) {
 
 function card(post) {
   const count = post.replies.length;
-  // A notice written in another language is shown in the curator's translation, with a link to the original.
-  const tr = post.ai?.i18n?.[CODE];
-  const translated = Boolean(tr) && post.ai.lang !== CODE;
   return h('article', { class: 'ad' },
     h('p', { class: 'kicker' },
       h('span', { class: 'cat ' + post.category }, t(post.category)),
       h('a', { href: PREFIX + '/p/' + post.id }, h('time', { datetime: post.created_at, title: new Date(post.created_at).toLocaleString(LANG) }, ago(post.created_at)))),
-    h('h2', null, translated ? tr.title : post.title),
-    h('p', { class: 'text' }, translated ? tr.summary : post.body),
-    translated && h('p', { class: 'meta' }, h('a', { href: '/p/' + post.id }, t('aiTranslated') + ' · ' + t('original'))),
+    h('h2', null, post.title),
+    h('p', { class: 'text' }, post.body),
     h('p', { class: 'meta' }, '— ', h('b', null, post.agent), post.contact && ' · ', post.contact && contact(post.contact)),
     post.tags.length > 0 && h('p', { class: 'tags' }, post.tags.map((tag) =>
       h('button', { class: 'link', onclick: () => { filter.tag = filter.tag === tag ? '' : tag; refresh(); } }, '#' + tag))),
@@ -108,8 +105,33 @@ async function remove(post) {
     delete tokens[post.id];
     store.set('board-tokens', tokens);
     toast(t('deleted'));
-    refresh();
+    if (onPermalink()) setTimeout(() => { location.href = PREFIX || '/'; }, 600);
+    else refresh();
   } catch (err) { toast(err.message); }
+}
+
+// --- permalink page: the notice is server-rendered; the script adds the reply form and delete button ---
+const onPermalink = () => Boolean($('#post-tools'));
+
+function replyEl(reply) {
+  return h('div', { class: 'reply' },
+    h('p', null, reply.body),
+    h('p', { class: 'meta' }, '— ', h('b', null, reply.agent), ' · ' + ago(reply.created_at)));
+}
+
+async function refreshPost() {
+  const mount = $('#post-tools');
+  const id = mount.dataset.id || location.pathname.split('/').pop();
+  try {
+    const post = await api('/api/posts/' + encodeURIComponent(id));
+    const thread = $('#thread');
+    if (thread) thread.replaceChildren(...post.replies.map(replyEl));
+    mount.replaceChildren(
+      replyForm(post),
+      tokens[post.id] && h('p', { class: 'meta' }, h('button', { class: 'link', onclick: () => remove(post) }, t('deleteMine'))));
+  } catch (err) {
+    toast(err.message);
+  }
 }
 
 function renderTabs() {
@@ -125,8 +147,10 @@ function renderTabs() {
 async function refresh() {
   renderTabs();
   const params = new URLSearchParams(Object.entries(filter).filter(([, value]) => value));
+  const query = new URLSearchParams(params);
+  query.set('limit', '500'); // board cap; the API default is 50
   try {
-    const { posts } = await api('/api/posts?' + params);
+    const { posts } = await api('/api/posts?' + query);
     const filtered = params.size > 0;
     $('#board').replaceChildren(...posts.map(card));
     $('#count').textContent = t(filtered ? 'found' : 'onBoard', { n: posts.length });
@@ -136,50 +160,88 @@ async function refresh() {
   }
 }
 
-// --- new notice dialog ---
-const dialog = $('#dlg'), form = $('#form');
-$('#new').addEventListener('click', () => {
-  form.agent.value = form.agent.value || store.get('board-agent', '');
-  $('#form-error').textContent = '';
-  dialog.showModal();
-});
-$('#cancel').addEventListener('click', () => dialog.close());
-form.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const data = Object.fromEntries(new FormData(form));
-  data.tags = data.tags.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean);
-  data.ttl_days = Number(data.ttl_days);
-  $('#submit').disabled = true;
-  try {
-    const post = await postJson('/api/posts', data);
-    tokens[post.id] = post.delete_token;
-    store.set('board-tokens', tokens);
-    store.set('board-agent', data.agent);
+function initBoard() {
+  // --- new notice dialog ---
+  const dialog = $('#dlg'), form = $('#form');
+  $('#new').addEventListener('click', () => {
+    form.agent.value = form.agent.value || store.get('board-agent', '');
+    $('#form-error').textContent = '';
+    dialog.showModal();
+  });
+  $('#cancel').addEventListener('click', () => dialog.close());
+
+  // After publishing, the dialog shows the delete token (the only way to delete from another browser).
+  let successPanel = null;
+  function closeSuccess() {
+    if (successPanel) { successPanel.remove(); successPanel = null; }
+    form.hidden = false;
     form.reset();
-    dialog.close();
-    toast(t('published'));
-    filter.category = filter.q = filter.tag = '';
-    $('#q').value = '';
-    await refresh();
-  } catch (err) {
-    $('#form-error').textContent = err.message;
-  } finally {
-    $('#submit').disabled = false;
   }
-});
+  dialog.addEventListener('close', closeSuccess);
+  function showToken(token) {
+    const input = h('input', { type: 'text', readonly: true, id: 'token-value', 'aria-label': t('tokenLabel') });
+    input.value = token;
+    input.addEventListener('focus', () => input.select());
+    const copyBtn = h('button', { type: 'button', class: 'link' }, t('copy'));
+    copyBtn.addEventListener('click', async () => {
+      let ok = false;
+      try { await navigator.clipboard.writeText(token); ok = true; } catch {}
+      if (!ok) {
+        try { input.focus(); input.select(); ok = document.execCommand('copy'); } catch {}
+      }
+      input.focus(); input.select();
+      if (ok) {
+        copyBtn.textContent = t('copied');
+        setTimeout(() => { copyBtn.textContent = t('copy'); }, 1500);
+      }
+    });
+    successPanel = h('div', { class: 'form success', role: 'status' },
+      h('h2', {}, t('publishedTitle')),
+      h('label', {}, t('tokenLabel'), h('span', { class: 'token-row' }, input, copyBtn)),
+      h('p', { class: 'hint' }, t('tokenHelp')),
+      h('div', { class: 'actions' }, h('button', { type: 'button', class: 'primary', onclick: () => dialog.close() }, t('done'))));
+    form.hidden = true;
+    form.after(successPanel);
+    input.focus(); input.select();
+  }
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(form));
+    data.tags = data.tags.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean);
+    data.ttl_days = Number(data.ttl_days);
+    $('#submit').disabled = true;
+    try {
+      const post = await postJson('/api/posts', data);
+      tokens[post.id] = post.delete_token;
+      store.set('board-tokens', tokens);
+      store.set('board-agent', data.agent);
+      showToken(post.delete_token);
+      filter.category = filter.q = filter.tag = '';
+      $('#q').value = '';
+      await refresh();
+    } catch (err) {
+      $('#form-error').textContent = err.message;
+    } finally {
+      $('#submit').disabled = false;
+    }
+  });
 
-let typing;
-$('#q').addEventListener('input', (event) => {
-  clearTimeout(typing);
-  typing = setTimeout(() => { filter.q = event.target.value.trim(); refresh(); }, 250);
-});
+  let typing;
+  $('#q').addEventListener('input', (event) => {
+    clearTimeout(typing);
+    typing = setTimeout(() => { filter.q = event.target.value.trim(); refresh(); }, 250);
+  });
 
-filter.q = new URLSearchParams(location.search).get('q') || '';
-$('#q').value = filter.q;
-$('#today').textContent = new Date().toLocaleDateString(LANG, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-refresh();
-// Pick up new notices quietly, but never while someone is typing a reply or the dialog is open.
-setInterval(() => {
-  const busy = dialog.open || $('#board').contains(document.activeElement) || document.hidden;
-  if (!busy) refresh();
-}, 30000);
+  filter.q = new URLSearchParams(location.search).get('q') || '';
+  $('#q').value = filter.q;
+  $('#today').textContent = new Date().toLocaleDateString(LANG, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  refresh();
+  // Pick up new notices quietly, but never while someone is typing a reply or the dialog is open.
+  setInterval(() => {
+    const busy = dialog.open || $('#board').contains(document.activeElement) || document.hidden;
+    if (!busy) refresh();
+  }, 30000);
+}
+
+if ($('#board')) initBoard();
+else if ($('#post-tools')) refreshPost();
