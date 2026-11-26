@@ -5,13 +5,13 @@
       "has": [{ "type": "host", "value": "agent-board-(blond|gressodevs-projects)\\.vercel\\.app" }],
       "destination": "https://boardforagents.com/$1",
       "permanent": true
-    }
+    },
+    { "source": "/(en|ru|zh)", "destination": "/", "permanent": true },
+    { "source": "/(ru|zh)/(p/[^/]+)", "destination": "/$2", "permanent": true }
   ],
   "functions": { "api/index.js": { "maxDuration": 60 } },
   "rewrites": [
     { "source": "/", "destination": "/api?__path=home" },
-    { "source": "/(en|ru|zh)", "destination": "/api?__path=$1" },
-    { "source": "/(ru|zh)/p/(.*)", "destination": "/api?__path=$1/p/$2" },
     { "source": "/p/(.*)", "destination": "/api?__path=p/$1" },
     { "source": "/api/(.*)", "destination": "/api?__path=api/$1" },
     { "source": "/.well-known/(.*)", "destination": "/api?__path=.well-known/$1" },

@@ -4,7 +4,6 @@ const { LIMITS, CATEGORIES, MCP_VERSIONS, NAME, SUMMARY, UNTRUSTED, TOOLS } = re
 const discovery = require('../lib/discovery');
 const pages = require('../lib/pages');
 const store = require('../lib/store');
-const { LANGS } = require('../lib/i18n');
 const curator = require('../lib/curator');
 const { waitUntil } = require('@vercel/functions');
 
@@ -42,7 +41,12 @@ function text(value, name, max, required) {
 
 const sha = (s) => crypto.createHash('sha256').update(String(s)).digest('hex');
 const newId = () => crypto.randomBytes(5).toString('hex');
-const publicPost = ({ key_hash, ...post }) => post;
+// Strips private fields. The curator's stored translations (ai.i18n) are never exposed.
+const publicPost = ({ key_hash, ai, ...post }) => {
+  if (!ai) return post;
+  const { i18n, ...rest } = ai;
+  return { ...post, ai: rest };
+};
 
 function findPost(data, id) {
   const post = data.posts.find((p) => p.id === id && Date.parse(p.expires_at) > Date.now());
@@ -73,8 +77,7 @@ function listPosts(data, query = {}) {
   }
   if (query.q) {
     const needle = String(query.q).toLowerCase();
-    // The curator's translations are searched too, so a query in one language finds notices written in another.
-    const haystack = (p) => [p.title, p.body, p.agent, ...p.tags, ...Object.values(p.ai?.i18n || {}).flatMap((tr) => [tr.title, tr.summary])];
+    const haystack = (p) => [p.title, p.body, p.agent, ...p.tags];
     posts = posts.filter((p) => haystack(p).join('\n').toLowerCase().includes(needle));
   }
   const limit = Math.min(Math.max(parseInt(query.limit, 10) || 50, 1), LIMITS.posts);
@@ -232,13 +235,12 @@ function send(res, status, body, type = TYPES.json) {
 // Pages, Markdown mirrors and discovery files. Returns false when the route is not one of them.
 async function servePublic(res, route, wantsMarkdown, base) {
   const posts = async () => listPosts(await store.read(), { limit: LIMITS.posts });
-  // The board itself: "/" is English, every other language lives at its own path ("/ru", "/zh").
-  const lang = route === '' || route === 'home' ? 'en' : Object.hasOwn(LANGS, route) ? route : null;
-  if (lang) {
+  // The board itself, English only.
+  if (route === '' || route === 'home') {
     res.setHeader('Vary', 'Accept');
     return wantsMarkdown
       ? send(res, 200, discovery.toMarkdown(await posts(), base), TYPES.md)
-      : send(res, 200, pages.homePage(await posts(), base, lang), TYPES.html);
+      : send(res, 200, pages.homePage(await posts(), base), TYPES.html);
   }
   switch (route) {
     case 'index.md': return send(res, 200, discovery.toMarkdown(await posts(), base), TYPES.md);
@@ -252,10 +254,10 @@ async function servePublic(res, route, wantsMarkdown, base) {
       return send(res, 200, discovery.apiCatalog(base), 'application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"');
     case '.well-known/mcp.json': case '.well-known/mcp/server-card.json': return send(res, 200, discovery.serverCard(base));
   }
-  // A notice: "/p/<id>" in English, "/ru/p/<id>" and "/zh/p/<id>" with the curator's translation.
-  const page = route.match(/^(?:(ru|zh)\/)?p\/([0-9a-f]+)(\.md)?$/);
+  // A notice: "/p/<id>".
+  const page = route.match(/^p\/([0-9a-f]+)(\.md)?$/);
   if (!page) return false;
-  const [, pageLang = 'en', id, markdown] = page;
+  const [, id, markdown] = page;
   let post;
   try {
     post = publicPost(findPost(await store.read(), id));
@@ -267,7 +269,7 @@ async function servePublic(res, route, wantsMarkdown, base) {
   if (!markdown) res.setHeader('Vary', 'Accept');
   return markdown || wantsMarkdown
     ? send(res, 200, discovery.toMarkdown([post], base), TYPES.md)
-    : send(res, 200, pages.postPage(post, base, pageLang), TYPES.html);
+    : send(res, 200, pages.postPage(post, base), TYPES.html);
 }
 
 // Same-origin only. The inline script (window constants) needs 'unsafe-inline'; pages have no inline styles.
@@ -295,6 +297,15 @@ module.exports = async function handler(req, res) {
     const ctx = { ip, base, oidc: req.headers['x-vercel-oidc-token'] };
     const method = req.method === 'HEAD' ? 'GET' : req.method;
     const accept = req.headers.accept || '';
+
+    // Retired language paths: /en, /ru, /zh and /ru/p/<id>[.md], /zh/p/<id>[.md] go to the English URLs.
+    const old = route.match(/^(?:(?:en|ru|zh)|(?:ru|zh)\/(p\/[^/]+))$/i);
+    if (old && (method === 'GET')) {
+      res.statusCode = 301;
+      res.setHeader('Location', '/' + (old[1] || '') + (url.search || ''));
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+      return res.end();
+    }
 
     if (method === 'GET' && (await servePublic(res, route, accept.includes('text/markdown'), base)) !== false) return;
 

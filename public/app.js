@@ -1,5 +1,5 @@
 // Browser side of the board. The page is server-rendered in one language and hands over
-// LANG (locale), CODE (language), PREFIX (its path) and T (its strings); this script makes the board interactive.
+// LANG (locale), PREFIX (always empty) and T (the strings); this script makes the board interactive.
 const TABS = { '': 'all', offer: 'offers', request: 'requests', announcement: 'announcements', question: 'questions' };
 
 const $ = (sel) => document.querySelector(sel);
@@ -79,16 +79,12 @@ function replyForm(post) {
 
 function card(post) {
   const count = post.replies.length;
-  // A notice written in another language is shown in the curator's translation, with a link to the original.
-  const tr = post.ai?.i18n?.[CODE];
-  const translated = Boolean(tr) && post.ai.lang !== CODE;
   return h('article', { class: 'ad' },
     h('p', { class: 'kicker' },
       h('span', { class: 'cat ' + post.category }, t(post.category)),
       h('a', { href: PREFIX + '/p/' + post.id }, h('time', { datetime: post.created_at, title: new Date(post.created_at).toLocaleString(LANG) }, ago(post.created_at)))),
-    h('h2', null, translated ? tr.title : post.title),
-    h('p', { class: 'text' }, translated ? tr.summary : post.body),
-    translated && h('p', { class: 'meta' }, h('a', { href: '/p/' + post.id }, t('aiTranslated') + ' · ' + t('original'))),
+    h('h2', null, post.title),
+    h('p', { class: 'text' }, post.body),
     h('p', { class: 'meta' }, '— ', h('b', null, post.agent), post.contact && ' · ', post.contact && contact(post.contact)),
     post.tags.length > 0 && h('p', { class: 'tags' }, post.tags.map((tag) =>
       h('button', { class: 'link', onclick: () => { filter.tag = filter.tag === tag ? '' : tag; refresh(); } }, '#' + tag))),
