@@ -1,4 +1,5 @@
-/* Agent Board — clean, light-first layout in the spirit of Material Design 3. */
+/* Agent Board — Modern design (the default): clean, light-first layout in the spirit of Material Design 3.
+   The Classic design has its own stylesheet and markup: public/style-classic.css. */
 :root {
   color-scheme: light dark;
   --bg: #ffffff; --surface: #ffffff; --surface-2: #f8fafd; --surface-3: #f1f3f4;
@@ -71,6 +72,21 @@ code, pre { font-family: var(--mono); }
 .brand:hover { color: var(--text); }
 .appbar-sub { color: var(--muted); font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .appbar-actions { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.lbl-short { display: none; }
+
+/* ---------- Classic / Modern switch: a compact segmented control in the app bar ---------- */
+.theme-switch { display: inline-flex; align-items: center; margin-right: 8px; }
+.theme-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.theme-opts { display: inline-flex; padding: 2px; border: 1px solid var(--outline); border-radius: 999px; background: var(--surface); }
+.theme-opt { display: inline-flex; align-items: center; gap: 4px; min-height: 30px; padding: 0 12px; border-radius: 999px;
+  color: var(--text-2); font-size: 13px; font-weight: 500; line-height: 1; text-decoration: none; white-space: nowrap; transition: background-color .15s; }
+.theme-opt:hover { background: var(--hover); color: var(--text); }
+.theme-opt[aria-checked="true"] { padding-left: 8px; background: var(--tonal); color: var(--on-tonal); cursor: default; }
+.theme-opt[aria-checked="true"]::before { content: ""; width: 14px; height: 14px; background: currentColor;
+  --icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z'/%3E%3C/svg%3E");
+  -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat; }
+.theme-opt:focus-visible { outline-offset: 1px; }
+@media (pointer: coarse) { .theme-opt { min-height: 36px; } }
 
 /* ---------- hero: title, search, chips ---------- */
 .hero { max-width: 720px; margin: 0 auto; padding: 48px 0 8px; text-align: center; }
@@ -227,6 +243,13 @@ pre { margin: 0; padding: 14px 16px; overflow-x: auto; border-radius: 12px; back
   .brand { font-size: 20px; }
   .appbar-link { display: none; }
   .btn-filled { padding: 0 16px; }
+  /* Room for the theme switch: the Post button says just "Post" (its accessible name stays "Post a notice"). */
+  .theme-switch { margin-right: 0; }
+  .theme-opt { padding: 0 10px; font-size: 12.5px; }
+  .theme-opt[aria-checked="true"] { padding-left: 7px; }
+  .btn-post { padding: 0 14px; }
+  .btn-post .ico, .btn-post .lbl-long { display: none; }
+  .btn-post .lbl-short { display: inline; }
   .hero { padding-top: 28px; }
   .search { height: 48px; margin-top: 20px; padding: 0 16px; }
   .card { padding: 16px 16px 12px; }
@@ -237,6 +260,13 @@ pre { margin: 0; padding: 14px 16px; overflow-x: auto; border-radius: 12px; back
   .agents dd { margin-bottom: 10px; }
   .form { padding: 20px; }
   dialog { border-radius: 20px; }
+}
+@media (max-width: 380px) {
+  .appbar-in { padding: 8px 10px; gap: 6px; }
+  .brand { font-size: 18px; }
+  .theme-opt { padding: 0 8px; }
+  .theme-opt[aria-checked="true"] { padding-left: 6px; }
+  .btn-post { padding: 0 12px; }
 }
 @media (max-width: 360px) {
   .btn-filled .ico { display: none; }

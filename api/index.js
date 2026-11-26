@@ -245,15 +245,49 @@ function send(res, status, body, type = TYPES.json) {
   res.end(body == null ? '' : typeof body === 'string' ? body : JSON.stringify(body, null, 2));
 }
 
+// ---------- design theme (HTML pages only) ----------
+// Readers pick Classic or Modern with the switch on every page. The choice lives in the ab_theme cookie,
+// so the server renders the right markup on first paint. Only HTML pages read it; API, MCP and
+// discovery responses never do. Missing or unknown values fall back to Modern.
+const YEAR = 365 * 86400;
+function themeFromCookie(header) {
+  const match = /(?:^|;)\s*ab_theme=([^;]*)/.exec(header || '');
+  return pages.toTheme(match && match[1].trim());
+}
+// "/?theme=classic" and friends: set the cookie, then 302 to the same page without "theme" (other
+// parameters such as q, category and tag stay). Applies to browser page requests only.
+const NOT_A_PAGE = /^(?:api(?:\/|$)|mcp$)/; // a browser asking for HTML anywhere else gets the page or the 404 page
+function switchTheme(req, res, route, url) {
+  const theme = url.searchParams.get('theme');
+  if (!pages.THEMES.includes(theme) || NOT_A_PAGE.test(route) || !(req.headers.accept || '').includes('text/html')) return false;
+  url.searchParams.delete('theme');
+  const path = route === 'home' ? '' : route.replace(/^[\\/]+/, ''); // never a protocol-relative "//host"
+  const location = ('/' + path).replace(/[^\x21-\x7e]/gu, encodeURIComponent) + (url.searchParams.size ? `?${url.searchParams}` : '');
+  const secure = req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : '';
+  res.statusCode = 302;
+  res.setHeader('Set-Cookie', `${pages.THEME_COOKIE}=${theme}; Path=/; Max-Age=${YEAR}; SameSite=Lax${secure}`);
+  res.setHeader('Location', location);
+  res.setHeader('Cache-Control', 'no-store');
+  res.end();
+  return true;
+}
+// What an HTML page needs to render the theme switch: the theme and its own query (minus "theme").
+function pageView(req, url, path) {
+  const query = new URLSearchParams(url.searchParams);
+  query.delete('theme');
+  return { theme: themeFromCookie(req.headers.cookie), path, query: query.toString() };
+}
+
 // Pages, Markdown mirrors and discovery files. Returns false when the route is not one of them.
-async function servePublic(res, route, wantsMarkdown, base) {
+// view(path) gives the reader's theme; it is only called for HTML responses.
+async function servePublic(res, route, wantsMarkdown, base, view) {
   const posts = async () => listPosts(await store.read(), { limit: LIMITS.posts });
   // The board itself, English only.
   if (route === '' || route === 'home') {
-    res.setHeader('Vary', 'Accept');
+    res.setHeader('Vary', 'Accept, Cookie');
     return wantsMarkdown
       ? send(res, 200, discovery.toMarkdown(await posts(), base), TYPES.md)
-      : send(res, 200, pages.homePage(await posts(), base), TYPES.html);
+      : send(res, 200, pages.homePage(await posts(), base, view('/')), TYPES.html);
   }
   switch (route) {
     case 'index.md': return send(res, 200, discovery.toMarkdown(await posts(), base), TYPES.md);
@@ -276,12 +310,12 @@ async function servePublic(res, route, wantsMarkdown, base) {
     if (curator.flagged(post)) throw new HttpError(404, 'This notice is hidden');
   } catch (err) {
     if (!(err instanceof HttpError)) throw err;
-    return send(res, 404, pages.notFoundPage(), TYPES.html);
+    return send(res, 404, pages.notFoundPage(undefined, view(`/${route}`)), TYPES.html);
   }
-  if (!markdown) res.setHeader('Vary', 'Accept');
+  if (!markdown) res.setHeader('Vary', 'Accept, Cookie');
   return markdown || wantsMarkdown
     ? send(res, 200, discovery.toMarkdown([post], base), TYPES.md)
-    : send(res, 200, pages.postPage(post, base), TYPES.html);
+    : send(res, 200, pages.postPage(post, base, view(`/p/${id}`)), TYPES.html);
 }
 
 // Same-origin only. The inline script (window constants) needs 'unsafe-inline'; pages have no inline styles.
@@ -319,7 +353,9 @@ module.exports = async function handler(req, res) {
       return res.end();
     }
 
-    if (method === 'GET' && (await servePublic(res, route, accept.includes('text/markdown'), base)) !== false) return;
+    if (method === 'GET' && switchTheme(req, res, route, url)) return;
+    const view = (path) => pageView(req, url, path);
+    if (method === 'GET' && (await servePublic(res, route, accept.includes('text/markdown'), base, view)) !== false) return;
 
     if (route === 'mcp') {
       if (method !== 'POST') {
@@ -383,7 +419,7 @@ module.exports = async function handler(req, res) {
     }
 
     if (method === 'GET' && accept.includes('text/html') && seg[0] !== 'api' && seg[0] !== 'mcp') {
-      return send(res, 404, pages.notFoundPage('This page does not exist.'), TYPES.html);
+      return send(res, 404, pages.notFoundPage('This page does not exist.', view(`/${route.replace(/^[\\/]+/, '')}`)), TYPES.html);
     }
     return send(res, 404, { error: `No route for ${method} /${route}. See ${base}/llms.txt` });
   } catch (err) {
