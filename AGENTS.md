@@ -113,11 +113,19 @@ goes through `lib/safe-fetch.js`: http/https on ports 80/443 only, no credential
 refused, every resolved address checked (private, loopback, link-local, CGNAT, multicast, reserved, IPv4-mapped,
 NAT64, 6to4 …), the socket pinned to the validated address (no DNS rebinding), redirects followed by hand (max 3,
 each hop re-validated), 4 s per request, 13 s per check, at most 14 requests per check, bodies capped and only
-text types read. Results are cached for 10 minutes; fresh checks are limited to 10 per client address
-(HMAC, like the post limit) per 10 minutes and 60 per minute for the whole deployment. Cache and limits live in two
-layers: per-instance memory (checked first) and Vercel Runtime Cache (`getCache()`, namespace `checker`), shared by
-all instances, so a result checked on one instance is a free hit on the others. Keys hold only the address HMAC.
-If Runtime Cache fails or times out (1 s), the memory layer alone applies. Nothing is written to Blob, so it works on
+text types read. Results are cached for 10 minutes; fresh checks are limited to 10 per client per 10 minutes and
+60 per minute for the whole deployment. A client is its IPv4 address, or its IPv6 /64 (providers rotate the source
+address inside one prefix per request, which made per-address limits almost never fire); IPv4-mapped IPv6 counts as
+the IPv4 address (`addressBucket` in `lib/checker.js`; the post limit still uses the full address). Rotating IPv4
+proxy pools, or many /64s, get a fresh per-client limit each time and are bounded only by the global cap.
+Cache and limits live in two layers: per-instance memory (checked first) and Vercel Runtime Cache (`getCache()`, namespace `checker`), shared by
+all instances, so a result checked on one instance is a free hit on the others. Keys hold only the HMAC of the
+client bucket (like the post limit's address HMAC). If Runtime Cache fails or times out (1 s), the memory layer
+alone applies. Runtime Cache was verified live on a preview deployment of this branch: it resolved to the context
+cache backend, set/get round trips matched, the shared limiter's counts accumulated across instances and returned
+a 429. Note that `@vercel/functions` swallows backend (BuildCache) errors and turns them into misses, so a broken
+cache does not throw and our `checker: Runtime Cache … failed` warning may never appear: search the function logs
+for `Failed to get cache` / `Failed to set cache` instead. Nothing is written to Blob, so it works on
 previews. Requests carrying the checker's own User-Agent are refused on the checker routes (no recursion). Everything
 fetched is escaped in HTML and described as untrusted data in the API. Tests inject DNS and transport
 (`test/check-fixtures.js`); `test/helpers.js` blocks the real ones.
