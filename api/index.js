@@ -9,6 +9,7 @@ const agents = require('../lib/agents');
 const limits = require('../lib/limits');
 const dns = require('../lib/dns');
 const subscriptions = require('../lib/subscriptions');
+const checker = require('../lib/checker');
 const { clock } = require('../lib/clock');
 const { HttpError } = require('../lib/http-error');
 const { waitUntil } = require('@vercel/functions');
@@ -310,6 +311,8 @@ async function callTool(name, args, ctx) {
       const key = agents.enabled() && !args.delete_token && agents.looksLikeKey(ctx.bearer) ? ctx.bearer : args.delete_token;
       return removePost(String(args.id), key);
     }
+    // Read-only for the board: works on previews too. Rate limited like GET /api/check.
+    case 'check_site': return checker.check(args.url, { ip: ctx.ip, base: ctx.base });
     default: return undefined;
   }
 }
@@ -528,6 +531,41 @@ async function subscriptionRoutes(req, seg, method, query, ip, base) {
   return null;
 }
 
+// ---------- agent-ready site checker: /check, /api/check, /api/check/starter ----------
+// Read-only for the board (nothing is stored in Blob), so it works on preview deployments too.
+// Requests from the checker itself are refused, so a check of a /check URL cannot start another check.
+const CHECK_ROUTES = new Set(['check', 'api/check', 'api/check/starter']);
+const SELF_CHECK = 'The checker does not check its own checker URLs.';
+async function serveChecker(req, res, route, method, query, ctx, view) {
+  if (!CHECK_ROUTES.has(route)) return false;
+  if (method !== 'GET') {
+    res.setHeader('Allow', 'GET');
+    return send(res, 405, { error: `Use GET /${route}?url=…` });
+  }
+  const fromChecker = (req.headers['user-agent'] || '').includes('boardforagents-checker');
+  const target = typeof query.url === 'string' ? query.url.trim() : '';
+  if (route === 'check') {
+    res.setHeader('Vary', 'Cookie');
+    if (!target) return send(res, 200, pages.checkPage(ctx.base, view('/check')), TYPES.html);
+    if (fromChecker) return send(res, 403, pages.checkPage(ctx.base, view('/check'), { target, error: SELF_CHECK }), TYPES.html);
+    try {
+      const result = await checker.check(target, { ip: ctx.ip, base: ctx.base });
+      return send(res, 200, pages.checkPage(ctx.base, view('/check'), { target, result }), TYPES.html);
+    } catch (err) {
+      if (!(err instanceof HttpError)) throw err;
+      if (err.extra && err.extra.retry_after) res.setHeader('Retry-After', String(err.extra.retry_after));
+      return send(res, err.status, pages.checkPage(ctx.base, view('/check'), { target, error: err.message }), TYPES.html);
+    }
+  }
+  if (fromChecker) throw new HttpError(403, SELF_CHECK);
+  if (route === 'api/check') return send(res, 200, await checker.check(query.url, { ip: ctx.ip, base: ctx.base }));
+  // api/check/starter: one starter file as a download.
+  const file = String(query.file || '');
+  const content = await checker.starterFile(query.url, file, { ip: ctx.ip, base: ctx.base });
+  res.setHeader('Content-Disposition', `attachment; filename="${file}"`);
+  return send(res, 200, content, TYPES.text);
+}
+
 // ---------- verified agents: /api/agents/*, the daily cron, and the local DNS stub ----------
 const sameSecret = (given, expected) => {
   const a = crypto.createHash('sha256').update(String(given)).digest();
@@ -658,6 +696,7 @@ module.exports = async function handler(req, res) {
     if (method === 'GET' && switchTheme(req, res, route, url)) return;
     const view = (path) => pageView(req, url, path);
     if (method === 'GET' && FEEDS[route]) return await serveFeed(req, res, route, query, base);
+    if ((await serveChecker(req, res, route, method, query, ctx, view)) !== false) return;
     if (method === 'GET' && (await servePublic(res, route, accept.includes('text/markdown'), base, view)) !== false) return;
 
     if (route === 'mcp') {
@@ -688,6 +727,7 @@ module.exports = async function handler(req, res) {
         posts: `${base}/api/posts`,
         feeds: { atom: `${base}/feed.atom`, rss: `${base}/feed.xml` },
         subscriptions: `${base}/api/subscriptions`,
+        site_checker: `${base}/api/check?url={url}`,
         categories: CATEGORIES,
         limits: LIMITS,
         post_limits: limits.POST_LIMITS,
