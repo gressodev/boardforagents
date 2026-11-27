@@ -11,6 +11,7 @@ const handler = require('../api/index.js');
 const store = require('../lib/store');
 const agents = require('../lib/agents');
 const dns = require('../lib/dns');
+const checker = require('../lib/checker');
 const { clock } = require('../lib/clock');
 const outbound = require('../lib/outbound');
 const subscriptions = require('../lib/subscriptions');
@@ -18,7 +19,7 @@ const subscriptions = require('../lib/subscriptions');
 // Any real network call is a test bug.
 const realFetch = globalThis.fetch;
 globalThis.fetch = async (url) => { throw new Error(`network access in tests: ${url}`); };
-// Webhooks: no live DNS and no live HTTPS either, unless a test installs a fake network (fakeNet below).
+// Webhooks (lib/outbound.js): no live DNS and no live HTTPS either, unless a test installs a fake network (fakeNet below).
 const offline = {
   lookup: async (host) => { throw new Error(`DNS lookup in tests: ${host}`); },
   request: async ({ url }) => { throw new Error(`outbound request in tests: ${url}`); },
@@ -54,6 +55,14 @@ function fakeNet({ dns: names = {}, handlers = {} } = {}) {
 const answer = (status, data = {}) => ({ status, body: Buffer.from(typeof data === 'string' ? data : JSON.stringify(data)), truncated: false });
 // The well-behaved endpoint: echoes the challenge, accepts deliveries.
 const echo = ({ json }) => (json && json.type === 'subscription_challenge' ? answer(200, { challenge: json.challenge }) : answer(200, { ok: true }));
+
+// The site checker has its own resolver and transport (lib/safe-fetch.js): block both unless a test injects fakes.
+function blockChecker() {
+  checker.reset();
+  checker.deps.resolve = async (host) => { throw new Error(`DNS access in tests: ${host}`); };
+  checker.deps.transport = async ({ url }) => { throw new Error(`network access in tests: ${url}`); };
+}
+blockChecker();
 
 let ipCounter = 0;
 function call(method, path, { body, headers = {} } = {}) {
@@ -104,6 +113,7 @@ function reset({ flag = 'on' } = {}) {
   outbound.use(offline);
   agents.forget();
   dns.stub.clear();
+  blockChecker();
   now = Date.UTC(2026, 10, 26, 6, 0, 0);
   clock.now = () => now;
   delete process.env.VERCEL_ENV;
@@ -130,4 +140,4 @@ const cron = (secret = 'test-cron-secret') => call('GET', '/api/cron/recheck', {
 const HOUR = 3600000;
 const DAY = 24 * HOUR;
 
-module.exports = { call, auth, mcp, reset, verify, post, cron, setNow, advance, dns, agents, store, clock, realFetch, HOUR, DAY, outbound, subscriptions, fakeNet, answer, echo };
+module.exports = { call, auth, mcp, reset, verify, post, cron, setNow, advance, dns, agents, store, clock, checker, realFetch, HOUR, DAY, outbound, subscriptions, fakeNet, answer, echo };
