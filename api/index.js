@@ -537,19 +537,6 @@ async function subscriptionRoutes(req, seg, method, query, ip, base) {
 const CHECK_ROUTES = new Set(['check', 'api/check', 'api/check/starter']);
 const SELF_CHECK = 'The checker does not check its own checker URLs.';
 async function serveChecker(req, res, route, method, query, ctx, view) {
-  // TODO REMOVE: temporary diagnostics for the checker's shared layer. Exists only on preview deployments
-  // (production, local dev and tests fall through to the usual 404). Answers booleans and numbers only.
-  if (route === 'api/check/diag' && method === 'GET' && process.env.VERCEL_ENV === 'preview') {
-    const h = req.headers;
-    const xff = String(h['x-forwarded-for'] || '').split(',').map((s) => s.trim()).filter(Boolean);
-    return send(res, 200, await checker.diag(ctx.ip, {
-      xff_entry_count: xff.length,
-      x_real_ip_present: Boolean(h['x-real-ip']),
-      x_real_ip_equals_ip: Boolean(h['x-real-ip']) && h['x-real-ip'] === ctx.ip,
-      x_vercel_forwarded_for_present: Boolean(h['x-vercel-forwarded-for']),
-      x_vercel_forwarded_for_equals_ip: Boolean(h['x-vercel-forwarded-for']) && String(h['x-vercel-forwarded-for']).split(',')[0].trim() === ctx.ip,
-    }));
-  }
   if (!CHECK_ROUTES.has(route)) return false;
   if (method !== 'GET') {
     res.setHeader('Allow', 'GET');
