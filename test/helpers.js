@@ -15,6 +15,7 @@ const checker = require('../lib/checker');
 const { clock } = require('../lib/clock');
 const outbound = require('../lib/outbound');
 const subscriptions = require('../lib/subscriptions');
+const { fakeSharedCache } = require('./check-fixtures');
 
 // Any real network call is a test bug.
 const realFetch = globalThis.fetch;
@@ -57,8 +58,10 @@ const answer = (status, data = {}) => ({ status, body: Buffer.from(typeof data =
 const echo = ({ json }) => (json && json.type === 'subscription_challenge' ? answer(200, { challenge: json.challenge }) : answer(200, { ok: true }));
 
 // The site checker has its own resolver and transport (lib/safe-fetch.js): block both unless a test injects fakes.
+// Its shared layer (Vercel Runtime Cache) is a fresh in-process fake for every test, never the real one.
 function blockChecker() {
   checker.reset();
+  checker.deps.shared = fakeSharedCache({ now: () => checker.deps.now() });
   checker.deps.resolve = async (host) => { throw new Error(`DNS access in tests: ${host}`); };
   checker.deps.transport = async ({ url }) => { throw new Error(`network access in tests: ${url}`); };
 }

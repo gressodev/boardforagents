@@ -81,4 +81,40 @@ function spaSite(host = 'spa.example.com') {
   return (url) => (url.startsWith(`http://${host}`) ? { body: SPA_HTML } : shell);
 }
 
-module.exports = { fakeNet, goodSite, spaSite, GOOD_HTML, GOOD_ROBOTS, SPA_HTML };
+// A fake Vercel Runtime Cache for the checker's shared layer: get / set / delete like RuntimeCache, values
+// stored as JSON (as Vercel does), ttl in seconds against the given clock. Several checker instances can share
+// one. fail: 'throw' | 'reject' | 'hang' makes every operation fail that way. writes records every set.
+function fakeSharedCache({ now = () => Date.now(), fail = null } = {}) {
+  const entries = new Map();
+  const writes = [];
+  const broken = () => {
+    if (fail === 'throw') throw new Error('runtime cache exploded');
+    if (fail === 'reject') return Promise.reject(new Error('runtime cache unavailable'));
+    if (fail === 'hang') return new Promise(() => {});
+    return null;
+  };
+  return {
+    entries,
+    writes,
+    get(key) {
+      const failed = broken();
+      if (failed) return failed;
+      const entry = entries.get(key);
+      if (!entry) return Promise.resolve(null);
+      if (entry.expires !== null && now() >= entry.expires) { entries.delete(key); return Promise.resolve(null); }
+      return Promise.resolve(JSON.parse(entry.json));
+    },
+    set(key, value, options = {}) {
+      const failed = broken();
+      if (failed) return failed;
+      const json = JSON.stringify(value ?? null);
+      writes.push({ key, json, options });
+      entries.set(key, { json, expires: options.ttl ? now() + options.ttl * 1000 : null });
+      return Promise.resolve();
+    },
+    delete(key) { entries.delete(key); return Promise.resolve(); },
+    expireTag() { return Promise.resolve(); },
+  };
+}
+
+module.exports = { fakeNet, fakeSharedCache, goodSite, spaSite, GOOD_HTML, GOOD_ROBOTS, SPA_HTML };

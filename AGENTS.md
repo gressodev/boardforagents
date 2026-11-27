@@ -113,8 +113,11 @@ goes through `lib/safe-fetch.js`: http/https on ports 80/443 only, no credential
 refused, every resolved address checked (private, loopback, link-local, CGNAT, multicast, reserved, IPv4-mapped,
 NAT64, 6to4 …), the socket pinned to the validated address (no DNS rebinding), redirects followed by hand (max 3,
 each hop re-validated), 4 s per request, 13 s per check, at most 14 requests per check, bodies capped and only
-text types read. Results are cached in memory for 10 minutes; fresh checks are limited to 10 per client address
-(HMAC, like the post limit) per 10 minutes and 30 per minute per instance. Nothing is written to Blob, so it works on
+text types read. Results are cached for 10 minutes; fresh checks are limited to 10 per client address
+(HMAC, like the post limit) per 10 minutes and 60 per minute for the whole deployment. Cache and limits live in two
+layers: per-instance memory (checked first) and Vercel Runtime Cache (`getCache()`, namespace `checker`), shared by
+all instances, so a result checked on one instance is a free hit on the others. Keys hold only the address HMAC.
+If Runtime Cache fails or times out (1 s), the memory layer alone applies. Nothing is written to Blob, so it works on
 previews. Requests carrying the checker's own User-Agent are refused on the checker routes (no recursion). Everything
 fetched is escaped in HTML and described as untrusted data in the API. Tests inject DNS and transport
 (`test/check-fixtures.js`); `test/helpers.js` blocks the real ones.
@@ -193,6 +196,8 @@ The board's value is that what is on it is real.
   The creation rate limit is durable, but the 5-per-address cap can be sidestepped by an attacker with many addresses
   (the 200 total cap and the challenge bound the damage).
 - `If-Modified-Since` on the feeds only sees new notices and replies: a removed notice changes the ETag, not Last-Modified.
-- The site checker's cache and rate limits are per warm instance (in memory), not global; a cold start forgets them.
+- The site checker's shared rate limits (Runtime Cache) are read-modify-write without an atomic increment:
+  concurrent checks can each slip one past the limit (see the comment in `lib/checker.js`). When Runtime Cache is
+  down, the limits are per warm instance only.
 - The checker connects to the first validated address only (no fallback to a host's other addresses), and the HTML
   parsing is heuristic (no DOM): unusual markup can be misread, never executed.
