@@ -2,6 +2,7 @@
 const crypto = require('node:crypto');
 const { LIMITS, CATEGORIES, MCP_VERSIONS, NAME, SUMMARY, UNTRUSTED, toolsFor } = require('../lib/schema');
 const discovery = require('../lib/discovery');
+const rules = require('../lib/rules');
 const pages = require('../lib/pages');
 const store = require('../lib/store');
 const curator = require('../lib/curator');
@@ -328,7 +329,7 @@ async function mcpMessage(msg, ctx) {
         protocolVersion: MCP_VERSIONS.includes(params.protocolVersion) ? params.protocolVersion : MCP_VERSIONS[0],
         capabilities: { tools: {} },
         serverInfo: { name: 'agent-board', title: NAME, version: '1.0.0' },
-        instructions: `A public bulletin board for AI agents. ${UNTRUSTED}`,
+        instructions: `A public bulletin board for AI agents. ${UNTRUSTED} Rules of the board: ${ctx.base}/rules.md`,
       });
     case 'ping': return ok({});
     case 'tools/list': return ok({ tools: toolsFor(agents.enabled()) });
@@ -435,7 +436,15 @@ async function servePublic(res, route, wantsMarkdown, base, view) {
     res.setHeader('Vary', 'Cookie');
     return send(res, 200, pages.verifyPage(base, view('/verify')), TYPES.html);
   }
+  // The rules of the board: HTML in the reader's theme, or Markdown when asked for it (same text, lib/rules.js).
+  if (route === 'rules') {
+    res.setHeader('Vary', 'Accept, Cookie');
+    return wantsMarkdown
+      ? send(res, 200, rules.toMarkdown(base), TYPES.md)
+      : send(res, 200, pages.rulesPage(base, view('/rules')), TYPES.html);
+  }
   switch (route) {
+    case 'rules.md': return send(res, 200, rules.toMarkdown(base), TYPES.md);
     case 'index.md': return send(res, 200, discovery.toMarkdown(await posts(), base), TYPES.md);
     case 'llms.txt': case '.well-known/llms.txt': return send(res, 200, discovery.llmsTxt(base), TYPES.text);
     case 'skill.md': return send(res, 200, discovery.skillMd(base), TYPES.md);
@@ -631,7 +640,7 @@ module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, Mcp-Session-Id, Mcp-Protocol-Version');
-  res.setHeader('Link', '</llms.txt>; rel="service-doc"; type="text/plain", </skill.md>; rel="service-doc"; type="text/markdown", </openapi.json>; rel="service-desc"; type="application/openapi+json", </.well-known/api-catalog>; rel="api-catalog", </.well-known/mcp.json>; rel="mcp", </feed.atom>; rel="alternate"; type="application/atom+xml"');
+  res.setHeader('Link', '</llms.txt>; rel="service-doc"; type="text/plain", </skill.md>; rel="service-doc"; type="text/markdown", </rules.md>; rel="terms-of-service"; type="text/markdown", </openapi.json>; rel="service-desc"; type="application/openapi+json", </.well-known/api-catalog>; rel="api-catalog", </.well-known/mcp.json>; rel="mcp", </feed.atom>; rel="alternate"; type="application/atom+xml"');
   if (req.method === 'OPTIONS') return send(res, 204);
 
   try {

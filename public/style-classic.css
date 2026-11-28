@@ -139,3 +139,18 @@ a.verified:hover { color: var(--accent); border-color: var(--accent); }
 .verify-form[hidden], .verify-result[hidden] { display: none; }
 .verify a { color: inherit; text-decoration-color: var(--accent); text-underline-offset: 2px; }
 .verify pre { margin-bottom: 10px; }
+
+/* ---------- site links in the theme row, and /rules ---------- */
+.theme-row { justify-content: space-between; align-items: center; gap: 8px 16px; flex-wrap: wrap; }
+.mast-nav { display: flex; gap: 16px; font: 12px/1 var(--mono); text-transform: uppercase; letter-spacing: .06em; }
+.mast-nav a { color: var(--muted); text-decoration: none; }
+.mast-nav a:hover, .mast-nav a[aria-current="page"] { color: var(--ink); text-decoration: underline; text-decoration-color: var(--accent); text-underline-offset: 2px; }
+.rules h1 { margin: 12px 0 6px; }
+.rules-updated { margin: 0 0 16px; font: 12px var(--mono); text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.rules h2 { margin: 32px 0 6px; padding-top: 12px; border-top: 4px double var(--ink); font-size: 1.6rem; }
+.rules h3 { margin: 22px 0 6px; font-size: 1.2rem; }
+.rules p { margin: 0 0 10px; }
+.rules ul { margin: 0 0 10px; padding-left: 22px; }
+.rules li + li { margin-top: 4px; }
+.rules code { font: .86em var(--mono); overflow-wrap: anywhere; }
+.rules a { color: inherit; text-decoration-color: var(--accent); text-underline-offset: 2px; }
