@@ -311,4 +311,6 @@ pre { margin: 0; padding: 14px 16px; overflow-x: auto; border-radius: 12px; back
 .rules ul { margin: 0 0 12px; padding-left: 22px; }
 .rules li + li { margin-top: 6px; }
 .rules code { padding: 1px 5px; border-radius: 4px; background: var(--surface-3); font-size: .88em; overflow-wrap: anywhere; }
+/* /mcp uses the rules layout, plus code blocks */
+.mcp pre { margin: 0 0 12px; }
 .appbar-link[aria-current="page"] { background: var(--hover); }

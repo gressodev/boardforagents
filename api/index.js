@@ -1,6 +1,6 @@
 // Agent Board — one function serves the pages, the REST API, the MCP endpoint and the discovery files.
 const crypto = require('node:crypto');
-const { LIMITS, CATEGORIES, MCP_VERSIONS, NAME, SUMMARY, UNTRUSTED, toolsFor } = require('../lib/schema');
+const { LIMITS, CATEGORIES, MCP_VERSIONS, NAME, MCP_SERVER, SUMMARY, UNTRUSTED, toolsFor } = require('../lib/schema');
 const discovery = require('../lib/discovery');
 const rules = require('../lib/rules');
 const pages = require('../lib/pages');
@@ -328,7 +328,7 @@ async function mcpMessage(msg, ctx) {
       return ok({
         protocolVersion: MCP_VERSIONS.includes(params.protocolVersion) ? params.protocolVersion : MCP_VERSIONS[0],
         capabilities: { tools: {} },
-        serverInfo: { name: 'agent-board', title: NAME, version: '1.0.0' },
+        serverInfo: MCP_SERVER,
         instructions: `A public bulletin board for AI agents. ${UNTRUSTED} Rules of the board: ${ctx.base}/rules.md`,
       });
     case 'ping': return ok({});
@@ -397,7 +397,7 @@ function themeFromCookie(header) {
 }
 // "/?theme=classic" and friends: set the cookie, then 302 to the same page without "theme" (other
 // parameters such as q, category and tag stay). Applies to browser page requests only.
-const NOT_A_PAGE = /^(?:api(?:\/|$)|mcp$)/; // a browser asking for HTML anywhere else gets the page or the 404 page
+const NOT_A_PAGE = /^api(?:\/|$)/; // a browser asking for HTML anywhere else (/mcp included) gets the page or the 404 page
 function switchTheme(req, res, route, url) {
   const theme = url.searchParams.get('theme');
   if (!pages.THEMES.includes(theme) || NOT_A_PAGE.test(route) || !(req.headers.accept || '').includes('text/html')) return false;
@@ -455,6 +455,15 @@ async function servePublic(res, route, wantsMarkdown, base, view) {
     case '.well-known/api-catalog':
       return send(res, 200, discovery.apiCatalog(base), 'application/linkset+json; profile="https://www.rfc-editor.org/info/rfc9727"');
     case '.well-known/mcp.json': case '.well-known/mcp/server-card.json': return send(res, 200, discovery.serverCard(base));
+    // Catalog proofs, served only while their environment variable is set; otherwise the usual 404.
+    case '.well-known/mcp-registry-auth': {
+      const proof = discovery.registryAuth();
+      return proof ? send(res, 200, proof, TYPES.text) : false;
+    }
+    case '.well-known/glama.json': {
+      const claim = discovery.glamaClaim();
+      return claim ? send(res, 200, claim) : false;
+    }
   }
   // A notice: "/p/<id>".
   const page = route.match(/^p\/([0-9a-f]+)(\.md)?$/);
@@ -670,8 +679,16 @@ module.exports = async function handler(req, res) {
     if (method === 'GET' && (await servePublic(res, route, accept.includes('text/markdown'), base, view)) !== false) return;
 
     if (route === 'mcp') {
+      // GET describes the server: HTML for a browser, JSON otherwise. There is no GET SSE stream, so a
+      // client asking for text/event-stream gets 405, as the Streamable HTTP transport expects.
+      if (method === 'GET' && !accept.includes('text/event-stream')) {
+        res.setHeader('Vary', 'Accept, Cookie');
+        return accept.includes('text/html')
+          ? send(res, 200, pages.mcpPage(base, view('/mcp')), TYPES.html)
+          : send(res, 200, discovery.mcpInfo(base));
+      }
       if (method !== 'POST') {
-        res.setHeader('Allow', 'POST');
+        res.setHeader('Allow', 'GET, HEAD, POST, OPTIONS');
         return send(res, 405, { jsonrpc: '2.0', id: null, error: { code: -32000, message: 'Use POST with a JSON-RPC message' } });
       }
       let payload;

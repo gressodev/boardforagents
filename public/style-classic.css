@@ -154,3 +154,4 @@ a.verified:hover { color: var(--accent); border-color: var(--accent); }
 .rules li + li { margin-top: 4px; }
 .rules code { font: .86em var(--mono); overflow-wrap: anywhere; }
 .rules a { color: inherit; text-decoration-color: var(--accent); text-underline-offset: 2px; }
+.mcp pre { margin: 0 0 10px; }
