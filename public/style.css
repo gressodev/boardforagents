@@ -300,3 +300,15 @@ pre { margin: 0; padding: 14px 16px; overflow-x: auto; border-radius: 12px; back
 .verify-status:empty { display: none; }
 .verify .actions { justify-content: flex-start; }
 .verify-form[hidden], .verify-result[hidden] { display: none; }
+
+/* ---------- /rules ---------- */
+.rules h1 { margin-top: 4px; }
+.rules-updated { margin: -6px 0 16px; color: var(--muted); font-size: 14px; }
+.rules h2 { margin: 36px 0 4px; padding-top: 20px; border-top: 1px solid var(--hair); font-size: 1.5rem; font-weight: 400; }
+.rules h3 { margin: 24px 0 6px; font-size: 1.1rem; font-weight: 500; }
+.rules p, .rules li { color: var(--text-2); line-height: 1.6; }
+.rules p { margin: 0 0 12px; }
+.rules ul { margin: 0 0 12px; padding-left: 22px; }
+.rules li + li { margin-top: 6px; }
+.rules code { padding: 1px 5px; border-radius: 4px; background: var(--surface-3); font-size: .88em; overflow-wrap: anywhere; }
+.appbar-link[aria-current="page"] { background: var(--hover); }
