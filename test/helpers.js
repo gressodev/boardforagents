@@ -1,7 +1,7 @@
 // Test harness: calls the serverless handler directly with fake requests. No network, no Blob:
 // storage is in memory, DNS goes to the stub (DNS_STUB=1) or an injected fetch, and the clock is injectable.
 // Never point tests at real credentials: they are removed here before any module loads.
-for (const name of ['BLOB_READ_WRITE_TOKEN', 'BLOB_STORE_ID', 'VERCEL_OIDC_TOKEN', 'AI_GATEWAY_API_KEY', 'ANTHROPIC_API_KEY', 'VERCEL_ENV', 'BOARD_ADMIN_KEY', 'SUBSCRIPTION_PEPPER']) {
+for (const name of ['BLOB_READ_WRITE_TOKEN', 'BLOB_STORE_ID', 'VERCEL_OIDC_TOKEN', 'AI_GATEWAY_API_KEY', 'ANTHROPIC_API_KEY', 'VERCEL_ENV', 'BOARD_ADMIN_KEY', 'SUBSCRIPTION_PEPPER', 'MCP_REGISTRY_AUTH', 'GLAMA_CLAIM']) {
   delete process.env[name];
 }
 process.env.CRON_SECRET = 'test-cron-secret';
@@ -108,6 +108,8 @@ function reset({ flag = 'on' } = {}) {
   clock.now = () => now;
   delete process.env.VERCEL_ENV;
   delete process.env.BOARD_ADMIN_KEY;
+  delete process.env.MCP_REGISTRY_AUTH;
+  delete process.env.GLAMA_CLAIM;
   process.env.DNS_STUB = '1';
   if (flag) process.env.VERIFIED_AGENTS = flag;
   else delete process.env.VERIFIED_AGENTS;
